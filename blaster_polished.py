@@ -1443,7 +1443,7 @@ def main():
             if rel_y < HEIGHT:
                 game_surface.blit(background_img, (0, rel_y))
 
-            draw_text_center(game_surface, "BLASTER CV", 64, GAME_W//2, GAME_H//4, NEON_BLUE, font_key='RussoOne')
+            draw_text_center(game_surface, "HAND-BLASTER SQUADRON", 64, GAME_W//2, GAME_H//4, NEON_BLUE, font_key='RussoOne')
             draw_text_center(game_surface, f"High Score: {highscore}", 24, GAME_W//2, GAME_H//2 - 20, WHITE, font_key='Orbitron')
             
             # --- START MENU HAND CURSOR ---
