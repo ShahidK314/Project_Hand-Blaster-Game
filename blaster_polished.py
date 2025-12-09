@@ -233,6 +233,7 @@ class PowerUp(pygame.sprite.Sprite):
         self.speed_y = 3
         
     def update(self, player_x=None, *args):
+        # FIX: Handle jika player_x tidak diberikan (agar tidak crash di all_sprites.update())
         if player_x is None: return 
         self.rect.y += self.speed_y
         if self.rect.top > HEIGHT:
@@ -271,6 +272,7 @@ class Player(pygame.sprite.Sprite):
             self.powerup_type = p_type
 
     def update(self, target_x=None, all_sprites=None, *args):
+        # FIX: Cegah crash jika dipanggil tanpa argumen oleh Group.update()
         if target_x is None: return 
 
         now = pygame.time.get_ticks()
@@ -428,7 +430,7 @@ class Enemy(pygame.sprite.Sprite):
 
         self.rect.y += self.speed_y
         self.rect.x += self.speed_x
-        if self.rect.top > HEIGHT + 10 or self.rect.left < -50 or self.rect.right > WIDTH + 50:
+        if self.rect.top > HEIGHT + 10 or self.rect.left < -25 or self.rect.right > WIDTH + 50:
             self.reset_pos()
 
 class ZigZagEnemy(Enemy):
@@ -463,13 +465,17 @@ class TankerEnemy(Enemy):
         self.speed_y = 1 # Lambat
         self.score_val = 50
 
+    # FIX: Override reset_pos agar tanker tetap lambat saat muncul lagi
+    def reset_pos(self):
+        super().reset_pos()
+        self.speed_y = 1 
+
     def update(self, *args):
         if self.hit_timer > 0 and pygame.time.get_ticks() - self.hit_timer > 100:
              self.image.set_alpha(255)
              self.hit_timer = 0
         
         self.rect.y += self.speed_y
-        # Tidak ada gerakan horizontal random (speed_x) untuk tanker, dia lurus tapi mematikan
         if self.rect.top > HEIGHT + 10:
             self.reset_pos()
 
@@ -479,9 +485,13 @@ class KamikazeEnemy(Enemy):
         # Warna kuning
         self.image.fill((255, 255, 0, 100), special_flags=pygame.BLEND_RGB_MULT)
         self.reset_pos()
+        self.score_val = 30
+
+    # FIX: Override reset_pos agar state kembali ke 'hover' saat muncul lagi
+    def reset_pos(self):
+        super().reset_pos()
         self.state = 'hover'
         self.timer = pygame.time.get_ticks()
-        self.score_val = 30
 
     def update(self, *args):
         super().update() # Handle flash effect
@@ -701,7 +711,15 @@ def main():
     player = Player()
     
     boss = None
-    boss_level_count = 0 
+    
+    # --- WAVE SYSTEM VARIABLES ---
+    current_wave = 1
+    enemies_spawned_in_wave = 0
+    enemies_killed_in_wave = 0
+    wave_quota = 10 # Musuh per wave awal
+    in_wave_transition = False
+    transition_timer = 0
+    boss_active = False
 
     # Parallax & Shake Variables
     bg_y = 0
@@ -710,15 +728,27 @@ def main():
     def spawn_enemy():
         # Random pick enemy type
         r = random.random()
-        if r < 0.6:
-            e = Enemy() # 60% Basic
-        elif r < 0.8:
-            e = ZigZagEnemy() # 20% ZigZag
-        elif r < 0.9:
-            e = KamikazeEnemy() # 10% Kamikaze
+        e = None
+        
+        # Wave 1: 100% Basic
+        if current_wave == 1:
+            e = Enemy()
+        # Wave 2: 70% Basic, 30% ZigZag
+        elif current_wave == 2:
+            if r < 0.7: e = Enemy()
+            else: e = ZigZagEnemy()
+        # Wave 3: 50% Basic, 30% ZigZag, 20% Tanker
+        elif current_wave == 3:
+            if r < 0.5: e = Enemy()
+            elif r < 0.8: e = ZigZagEnemy()
+            else: e = TankerEnemy()
+        # Wave 4+: Campur Semua (termasuk Kamikaze)
         else:
-            e = TankerEnemy() # 10% Tanker
-            
+            if r < 0.4: e = Enemy()
+            elif r < 0.7: e = ZigZagEnemy()
+            elif r < 0.85: e = TankerEnemy()
+            else: e = KamikazeEnemy()
+
         all_sprites.add(e)
         enemies.add(e)
     
@@ -728,15 +758,21 @@ def main():
         floating_texts.add(ft)
 
     def reset_game():
-        nonlocal score, ulti_meter, boss_level_count, boss, keyboard_control_active, next_boss_score, boss_active
+        nonlocal score, ulti_meter, boss, keyboard_control_active, boss_active
+        nonlocal current_wave, enemies_spawned_in_wave, enemies_killed_in_wave, wave_quota, in_wave_transition
         
         score = 0
         ulti_meter = 0
-        boss_level_count = 0
         boss = None
         keyboard_control_active = True 
-        next_boss_score = BOSS_SPAWN_SCORE
         boss_active = False
+        
+        # Reset Wave
+        current_wave = 1
+        wave_quota = 10
+        enemies_spawned_in_wave = 0
+        enemies_killed_in_wave = 0
+        in_wave_transition = False
         
         all_sprites.empty()
         enemies.empty()
@@ -750,15 +786,12 @@ def main():
         player.rect.bottom = HEIGHT - 10
         player.lives = 3
         player.powerup_type = 'normal'
-        player.shield_active = False # Reset shield
+        player.shield_active = False 
         player.hidden = False
         player.invincible = False 
         player.image.set_alpha(255)
         all_sprites.add(player)
         
-        for _ in range(6): 
-            spawn_enemy()
-            
         play_music(music_normal)
 
     def play_music(path):
@@ -782,20 +815,16 @@ def main():
     keyboard_control_active = True 
     current_gesture = "DIAM"
     
-    BOSS_SPAWN_SCORE = 500
-    next_boss_score = BOSS_SPAWN_SCORE
-    boss_active = False
-    
     # Fungsi Ulti
     def execute_ulti():
-        nonlocal score, ulti_meter, next_boss_score, boss_active, boss, shake_intensity
+        nonlocal score, ulti_meter, boss_active, boss, shake_intensity, enemies_killed_in_wave
         
         if ulti_meter < ULTI_THRESHOLD:
             return 
             
         bomb_sound.play() 
         ulti_meter = 0
-        shake_intensity = 20 # Shake saat Ulti
+        shake_intensity = 20 
         
         target_group = list(enemies)
         if boss_active and boss:
@@ -811,20 +840,25 @@ def main():
             
             if target != boss:
                 target.kill() 
+                enemies_killed_in_wave += 1 # Hitung kill untuk wave progress
         
         if boss_active:
             if boss.hp <= 0:
-                score += 100
-                next_boss_score += BOSS_SPAWN_SCORE
+                score += 500
                 boss_active = False
                 boss.kill()
                 boss = None
                 play_music(music_normal)
                 for bb in enemy_bullets: bb.kill()
-                for _ in range(6): spawn_enemy()
-        else:
-            score += (cnt * 10)
-            for _ in range(cnt): spawn_enemy()
+                
+                # Boss kalah -> Lanjut Wave Berikutnya
+                global in_wave_transition, transition_timer, current_wave
+                current_wave += 1
+                wave_quota += 5
+                enemies_spawned_in_wave = 0
+                enemies_killed_in_wave = 0
+                in_wave_transition = True
+                transition_timer = pygame.time.get_ticks()
 
 
     # --- Loop Utama ---
@@ -937,15 +971,42 @@ def main():
             for enemy in enemies:
                 enemy.shoot(all_sprites, enemy_bullets)
 
-            # --- BOSS SPAWN & LOGIC ---
-            if score >= next_boss_score and not boss_active:
-                for en in enemies: en.kill()
-                boss = Boss()
-                all_sprites.add(boss)
-                boss_active = True
-                shake_intensity = 15 # Shake saat Boss muncul
-                play_music(music_boss)
-            
+            # --- WAVE LOGIC ---
+            if not boss_active and not in_wave_transition:
+                # Cek apakah wave selesai?
+                if enemies_killed_in_wave >= wave_quota and len(enemies) == 0:
+                    in_wave_transition = True
+                    transition_timer = pygame.time.get_ticks()
+                    
+                    # Cek Boss Wave (Setiap kelipatan 5)
+                    if (current_wave + 1) % 5 == 0:
+                        pass # Next is boss, transition handled below
+                else:
+                    # Spawn Musuh jika kuota belum habis dan layar belum penuh
+                    if enemies_spawned_in_wave < wave_quota:
+                        if len(enemies) < 4 + (current_wave // 2): # Makin tinggi wave, makin ramai
+                            spawn_enemy()
+                            enemies_spawned_in_wave += 1
+
+            # --- TRANSITION LOGIC ---
+            if in_wave_transition:
+                if pygame.time.get_ticks() - transition_timer > 3000: # 3 Detik jeda
+                    in_wave_transition = False
+                    current_wave += 1
+                    
+                    if current_wave % 5 == 0: # Waktunya Boss!
+                        boss_active = True
+                        boss = Boss()
+                        all_sprites.add(boss)
+                        play_music(music_boss)
+                        shake_intensity = 20
+                    else:
+                        # Reset Wave Normal
+                        wave_quota += 5 # Tambah susah
+                        enemies_spawned_in_wave = 0
+                        enemies_killed_in_wave = 0
+
+            # --- BOSS LOGIC ---
             if boss_active and boss:
                 now = pygame.time.get_ticks()
                 if boss.state == 'fight':
@@ -985,13 +1046,12 @@ def main():
                     spawn_floating_text(boss.rect.centerx, boss.rect.y + 50, str(hit.damage), ORANGE)
 
                     if boss.hp <= 0:
-                        score += 100
-                        next_boss_score += BOSS_SPAWN_SCORE
+                        score += 1000
                         boss.kill()
                         boss = None
                         boss_active = False
                         ulti_meter = ULTI_THRESHOLD
-                        shake_intensity = 30 # Mega shake saat boss mati
+                        shake_intensity = 30 
                         play_music(music_normal)
 
                         for _ in range(5):
@@ -999,29 +1059,29 @@ def main():
                             all_sprites.add(ex)
 
                         for bb in enemy_bullets: bb.kill()
-                        for _ in range(6): spawn_enemy()
+                        
+                        # Boss Mati -> Transisi ke Wave berikutnya
+                        in_wave_transition = True
+                        transition_timer = pygame.time.get_ticks()
+                        # current_wave += 1 (akan dihandle di blok transition logic)
                         break
 
-            else:
-                if len(enemies) < 6:
-                    spawn_enemy()
-
             # --- COLLISIONS ---
-            hits = pygame.sprite.groupcollide(bullets, enemies, True, False) # False agar tidak langsung mati (utk Tanker)
+            hits = pygame.sprite.groupcollide(bullets, enemies, True, False) 
             for bullet, enemy_list in hits.items():
                 bullet.kill()
                 for en in enemy_list:
                     en.hp -= 1
-                    en.hit() # Flash effect
+                    en.hit() 
                     spawn_floating_text(en.rect.centerx, en.rect.top, str(bullet.damage))
                     
-                    # Spawn Hit Particles
                     for _ in range(3):
                         p = Particle(en.rect.centerx, en.rect.centery, YELLOW, 3, (random.uniform(-2,2), random.uniform(-2,2)), 10)
                         all_sprites.add(p)
 
                     if en.hp <= 0:
                         score += en.score_val
+                        enemies_killed_in_wave += 1 # Tambah progress wave
                         expl_sound.play()
                         expl = Explosion(en.rect.center)
                         all_sprites.add(expl)
@@ -1030,7 +1090,7 @@ def main():
                         if bullet.aoe_radius > 0:
                             aoe_expl = Explosion(en.rect.center, scale=2.0)
                             all_sprites.add(aoe_expl)
-                            shake_intensity = 5 # Shake dikit
+                            shake_intensity = 5 
                             nearby_enemies = []
                             for other_en in enemies:
                                 if get_pixel_dist(en.rect.center, other_en.rect.center) < bullet.aoe_radius and other_en not in enemy_list: 
@@ -1038,6 +1098,7 @@ def main():
                             for near_en in nearby_enemies:
                                 near_en.kill()
                                 score += 10
+                                enemies_killed_in_wave += 1
                                 ulti_meter = min(ULTI_THRESHOLD, ulti_meter + 1)
                                 ex = Explosion(near_en.rect.center)
                                 all_sprites.add(ex)
@@ -1092,7 +1153,6 @@ def main():
         else:
             all_sprites.draw(game_surface)
             
-        # Gambar Lingkaran Shield
         if player.shield_active and not player.hidden:
              pygame.draw.circle(game_surface, (0, 255, 255), player.rect.center, player.radius + 10, 2)
 
@@ -1101,7 +1161,14 @@ def main():
             # --- Panel HUD Kiri Atas ---
             draw_hud_panel_modern(game_surface, 10, 10, 250, 100, UI_BG)
             draw_text(game_surface, f"SCORE: {score}", 24, 20, 20, NEON_BLUE, font_key='Orbitron')
-            draw_text(game_surface, f"BEST: {highscore}", 18, 20, 50, WHITE, font_key='Orbitron')
+            # Info WAVE
+            draw_text(game_surface, f"WAVE: {current_wave}", 18, 20, 50, ORANGE, font_key='Orbitron')
+            enemies_left = max(0, wave_quota - enemies_killed_in_wave)
+            if boss_active: 
+                draw_text(game_surface, "TARGET: BOSS", 14, 120, 52, RED, font_key='Oxanium')
+            else:
+                draw_text(game_surface, f"LEFT: {enemies_left}", 14, 120, 52, WHITE, font_key='Oxanium')
+
             draw_text(game_surface, "ULTI METER (B/Lipat Jari)", 12, 20, 80, font_key='Oxanium')
             draw_bar_modern(game_surface, 20, 93, 220, 10, ulti_meter, ULTI_THRESHOLD, (0, 200, 255), (0, 100, 255))
             
@@ -1132,6 +1199,7 @@ def main():
             action_text = f"Gerakan: {current_gesture}"
             draw_text(game_surface, action_text, 18, WIDTH - 180, 45, WHITE, font_key='Oxanium')
 
+            # --- BOSS HUD ---
             if boss_active and boss:
                 bar_w = 400
                 bar_h = 20
@@ -1153,7 +1221,30 @@ def main():
                 draw_bar_modern(game_surface, WIDTH//2 - bar_w//2, 120, bar_w, bar_h, boss.hp, boss.max_hp, bar_color_start, bar_color_end)
                 hp_value_text = f"HP: {int(boss.hp)} / {boss.max_hp}"
                 draw_text_center(game_surface, hp_value_text, 16, WIDTH//2, 122, BLACK, font_key='Oxanium')
+            
+            # --- WAVE TRANSITION TEXT ---
+            if in_wave_transition:
+                # Background gelap transparan
+                overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+                overlay.fill((0, 0, 0, 150))
+                game_surface.blit(overlay, (0,0))
                 
+                # Teks Kedip-kedip
+                alpha = abs(math.sin(pygame.time.get_ticks() * 0.005)) * 255
+                txt_color = (255, 255, 255)
+                
+                next_wave_num = current_wave + 1
+                msg = f"WAVE {current_wave} COMPLETE!"
+                sub_msg = f"GET READY FOR WAVE {next_wave_num}..."
+                
+                if next_wave_num % 5 == 0:
+                    sub_msg = "WARNING: BOSS APPROACHING!"
+                    txt_color = RED
+
+                draw_text_center(game_surface, msg, 50, WIDTH//2, HEIGHT//2 - 50, NEON_BLUE, font_key='RussoOne')
+                draw_text_center(game_surface, sub_msg, 30, WIDTH//2, HEIGHT//2 + 20, txt_color, font_key='Orbitron')
+
+
             cursor_color = (0, 255, 0) if current_gesture == "TEMBAK" else (255, 0, 0) if current_gesture == "ULTI" else WHITE
             if not player.hidden:
                 pygame.draw.circle(game_surface, cursor_color, (int(player_target_x), player.rect.centery), 10, 2)
@@ -1202,7 +1293,8 @@ def main():
             game_surface.blit(trans_surface, (0, 0))
             draw_text_center(game_surface, "GAME OVER", 50, GAME_W//2, GAME_H//2, (255, 50, 50), font_key='RussoOne')
             draw_text_center(game_surface, f"FINAL SCORE: {score}", 30, GAME_W//2, GAME_H//2 + 60, WHITE, font_key='Orbitron')
-            draw_text_center(game_surface, "Tekan ENTER untuk Restart", 30, GAME_W//2, GAME_H//2 + 120, YELLOW, font_key='Oxanium')
+            draw_text_center(game_surface, f"WAVE REACHED: {current_wave}", 24, GAME_W//2, GAME_H//2 + 90, ORANGE, font_key='Oxanium')
+            draw_text_center(game_surface, "Tekan ENTER untuk Restart", 30, GAME_W//2, GAME_H//2 + 140, YELLOW, font_key='Oxanium')
 
         if score > highscore:
             highscore = score
