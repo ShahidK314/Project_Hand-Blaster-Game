@@ -131,6 +131,7 @@ YELLOW = (255, 255, 0)
 RED = (255, 0, 0)
 NEON_BLUE = (0, 255, 255) 
 ORANGE = (255, 165, 0)
+GREEN = (0, 255, 0)
 UI_BG = (20, 20, 40, 220) 
 
 # --- CLASSES ---
@@ -723,24 +724,27 @@ def main():
     bg_y = 0
     shake_intensity = 0
 
+    # Combo System
+    combo_count = 0
+    combo_timer = 0 # Frames
+
+    # Calibration
+    calibration_timer = 0
+
     def spawn_enemy():
         # Random pick enemy type
         r = random.random()
         e = None
         
-        # Wave 1: 100% Basic
         if current_wave == 1:
             e = Enemy()
-        # Wave 2: 70% Basic, 30% ZigZag
         elif current_wave == 2:
             if r < 0.7: e = Enemy()
             else: e = ZigZagEnemy()
-        # Wave 3: 50% Basic, 30% ZigZag, 20% Tanker
         elif current_wave == 3:
             if r < 0.5: e = Enemy()
             elif r < 0.8: e = ZigZagEnemy()
             else: e = TankerEnemy()
-        # Wave 4+: Campur Semua (termasuk Kamikaze)
         else:
             if r < 0.4: e = Enemy()
             elif r < 0.7: e = ZigZagEnemy()
@@ -758,12 +762,14 @@ def main():
     def reset_game():
         nonlocal score, ulti_meter, boss, keyboard_control_active, boss_active
         nonlocal current_wave, enemies_spawned_in_wave, enemies_killed_in_wave, wave_quota, in_wave_transition
+        nonlocal combo_count
         
         score = 0
         ulti_meter = 0
         boss = None
         keyboard_control_active = True 
         boss_active = False
+        combo_count = 0
         
         # Reset Wave
         current_wave = 1
@@ -804,7 +810,7 @@ def main():
         camera_thread.start()
         
     play_music(music_normal)
-    game_state = 'start' 
+    game_state = 'calibrate' if camera_available else 'start' # Start with calibration
     running = True
     camera_on = False 
     player_target_x = GAME_W // 2
@@ -838,7 +844,7 @@ def main():
             
             if target != boss:
                 target.kill() 
-                enemies_killed_in_wave += 1 # Hitung kill untuk wave progress
+                enemies_killed_in_wave += 1 
         
         if boss_active:
             if boss.hp <= 0:
@@ -849,7 +855,6 @@ def main():
                 play_music(music_normal)
                 for bb in enemy_bullets: bb.kill()
                 
-                # Boss kalah -> Lanjut Wave Berikutnya
                 global in_wave_transition, transition_timer, current_wave
                 current_wave += 1
                 wave_quota += 5
@@ -874,7 +879,11 @@ def main():
                     else:
                          keyboard_control_active = False
 
-                if game_state == 'start':
+                if game_state == 'calibrate':
+                    if event.key == pygame.K_RETURN: # Skip calibration
+                        game_state = 'start'
+
+                elif game_state == 'start':
                     if event.key == pygame.K_RETURN:
                         reset_game()
                         game_state = 'play'
@@ -909,6 +918,12 @@ def main():
             
             keyboard_input_this_frame = keys[pygame.K_LEFT] or keys[pygame.K_RIGHT]
             
+            # Combo Timer Logic
+            if combo_timer > 0:
+                combo_timer -= 1
+            else:
+                combo_count = 0
+
             # 1. Kontrol Keyboard (Movement)
             if keys[pygame.K_LEFT]: 
                 player_target_x = max(player_target_x - move_speed, player.rect.width // 2)
@@ -969,39 +984,39 @@ def main():
             for enemy in enemies:
                 enemy.shoot(all_sprites, enemy_bullets)
 
-            # --- WAVE LOGIC ---
+            # --- WAVE LOGIC (SAFEGUARD ADDED) ---
             if not boss_active and not in_wave_transition:
-                # SAFEGUARD: Jika musuh habis dan kuota spawn sudah lewat/habis, paksa next wave
-                # Ini mencegah bug "1 enemy left" tapi layar kosong
-                if len(enemies) == 0 and (enemies_killed_in_wave >= wave_quota or enemies_spawned_in_wave >= wave_quota):
+                # SAFEGUARD: Jika layar kosong DAN kuota sudah habis -> Paksa lanjut wave
+                # Ini memperbaiki bug "1 enemy left" yang stuck
+                all_enemies_dead = (len(enemies) == 0)
+                quota_met = (enemies_killed_in_wave >= wave_quota) or (enemies_spawned_in_wave >= wave_quota)
+                
+                if all_enemies_dead and quota_met:
                     in_wave_transition = True
                     transition_timer = pygame.time.get_ticks()
                     
-                    # Cek Boss Wave (Setiap kelipatan 5)
                     if (current_wave + 1) % 5 == 0:
-                        pass # Next is boss, transition handled below
+                        pass 
                 else:
-                    # Spawn Musuh jika kuota belum habis dan layar belum penuh
                     if enemies_spawned_in_wave < wave_quota:
-                        if len(enemies) < 4 + (current_wave // 2): # Makin tinggi wave, makin ramai
+                        if len(enemies) < 4 + (current_wave // 2): 
                             spawn_enemy()
                             enemies_spawned_in_wave += 1
 
             # --- TRANSITION LOGIC ---
             if in_wave_transition:
-                if pygame.time.get_ticks() - transition_timer > 3000: # 3 Detik jeda
+                if pygame.time.get_ticks() - transition_timer > 3000: 
                     in_wave_transition = False
                     current_wave += 1
                     
-                    if current_wave % 5 == 0: # Waktunya Boss!
+                    if current_wave % 5 == 0: 
                         boss_active = True
                         boss = Boss()
                         all_sprites.add(boss)
                         play_music(music_boss)
                         shake_intensity = 20
                     else:
-                        # Reset Wave Normal
-                        wave_quota += 5 # Tambah susah
+                        wave_quota += 5 
                         enemies_spawned_in_wave = 0
                         enemies_killed_in_wave = 0
 
@@ -1009,17 +1024,15 @@ def main():
             if boss_active and boss:
                 now = pygame.time.get_ticks()
                 if boss.state == 'fight':
-                    
                     if now - boss.last_shot >= boss.shoot_delay:
                         boss.last_shot = now
                         boss_shoot_sound.play()
-
+                        # Boss patterns (simplified for brevity, logic remains same)
                         if boss.hp > boss.max_hp * 0.5:
                             boss.shoot_delay = 900 
                             bb = BossBullet(boss.rect.centerx, boss.rect.bottom, vy=6)
                             all_sprites.add(bb)
                             enemy_bullets.add(bb)
-
                         elif boss.hp > boss.max_hp * 0.25:
                             boss.shoot_delay = 700 
                             b1 = BossBullet(boss.rect.centerx, boss.rect.bottom, vy=7)
@@ -1027,7 +1040,6 @@ def main():
                             b3 = BossBullet(boss.rect.centerx + 20, boss.rect.bottom, vx=2, vy=6)
                             all_sprites.add(b1, b2, b3)
                             enemy_bullets.add(b1, b2, b3)
-
                         else:
                             boss.shoot_delay = 400 
                             boss.wave_offset += 0.5
@@ -1052,17 +1064,12 @@ def main():
                         ulti_meter = ULTI_THRESHOLD
                         shake_intensity = 30 
                         play_music(music_normal)
-
                         for _ in range(5):
                             ex = Explosion((random.randint(200,600), random.randint(100,300)))
                             all_sprites.add(ex)
-
                         for bb in enemy_bullets: bb.kill()
-                        
-                        # Boss Mati -> Transisi ke Wave berikutnya
                         in_wave_transition = True
                         transition_timer = pygame.time.get_ticks()
-                        # current_wave += 1 (akan dihandle di blok transition logic)
                         break
 
             # --- COLLISIONS ---
@@ -1079,8 +1086,13 @@ def main():
                         all_sprites.add(p)
 
                     if en.hp <= 0:
-                        score += en.score_val
-                        enemies_killed_in_wave += 1 # Tambah progress wave
+                        # COMBO SYSTEM
+                        combo_count += 1
+                        combo_timer = 150 # Reset timer (approx 3 sec)
+                        combo_bonus = 1 + (combo_count * 0.1) # 10% bonus per combo
+                        
+                        score += int(en.score_val * combo_bonus)
+                        enemies_killed_in_wave += 1 
                         expl_sound.play()
                         expl = Explosion(en.rect.center)
                         all_sprites.add(expl)
@@ -1121,8 +1133,6 @@ def main():
                 hits_enemies = pygame.sprite.spritecollide(player, enemies, True, pygame.sprite.collide_circle)
             
                 if hits_bullets or hits_enemies:
-                    # FIX: Jika tabrakan, hitung sebagai kill juga agar wave tidak macet
-                    # Kecuali shield aktif
                     if player.shield_active:
                          player.shield_active = False
                          player.invincible = True
@@ -1130,22 +1140,22 @@ def main():
                          player.invincible_duration = 2000 
                          expl_sound.play() 
                     else:
-                        # Jika tertabrak musuh (bukan peluru), hitung musuh itu mati
+                        # FIX: Hitung kill jika nabrak musuh
                         if hits_enemies:
                             for en in hits_enemies:
                                 enemies_killed_in_wave += 1
-                                en.kill() # Pastikan musuh yang nabrak hilang
+                                en.kill()
 
                         player_die_sound.play()
                         all_sprites.add(Explosion(player.rect.center))
                         player.lives -= 1
                         player.hide()
                         shake_intensity = 20 
+                        combo_count = 0 # Reset Combo
                         player_target_x = WIDTH // 2 
                         if player.lives <= 0: game_state = 'gameover'
         
         # 3. Drawing
-        # Parallax Background Logic
         bg_y += 2
         rel_y = bg_y % background_img.get_height()
         game_surface.blit(background_img, (0, rel_y - background_img.get_height()))
@@ -1165,10 +1175,8 @@ def main():
 
 
         if game_state == 'play':
-            # --- Panel HUD Kiri Atas ---
             draw_hud_panel_modern(game_surface, 10, 10, 250, 100, UI_BG)
             draw_text(game_surface, f"SCORE: {score}", 24, 20, 20, NEON_BLUE, font_key='Orbitron')
-            # Info WAVE
             draw_text(game_surface, f"WAVE: {current_wave}", 18, 20, 50, ORANGE, font_key='Orbitron')
             enemies_left = max(0, wave_quota - enemies_killed_in_wave)
             if boss_active: 
@@ -1179,7 +1187,6 @@ def main():
             draw_text(game_surface, "ULTI METER (B/Lipat Jari)", 12, 20, 80, font_key='Oxanium')
             draw_bar_modern(game_surface, 20, 93, 220, 10, ulti_meter, ULTI_THRESHOLD, (0, 200, 255), (0, 100, 255))
             
-            # --- Panel HUD Kanan Atas ---
             draw_hud_panel_modern(game_surface, WIDTH - 350, 10, 340, 100, UI_BG) 
             draw_text(game_surface, "LIVES:", 18, WIDTH - 340, 18, WHITE, font_key='Oxanium')
             x = WIDTH - 200
@@ -1191,6 +1198,10 @@ def main():
             w_color = (0, 255, 255) if player.shield_active else YELLOW
             draw_text(game_surface, f"WEAPON: {weapon_text}", 18, WIDTH - 340, 45, w_color, font_key='Oxanium')
             
+            # Combo HUD
+            if combo_count > 1:
+                draw_text(game_surface, f"x{combo_count} COMBO!", 24, WIDTH - 340, 75, ORANGE, font_key='RussoOne')
+
             mode_status = "KEYBOARD"
             mode_color = NEON_BLUE
             if camera_available:
@@ -1206,7 +1217,6 @@ def main():
             action_text = f"Gerakan: {current_gesture}"
             draw_text(game_surface, action_text, 18, WIDTH - 180, 45, WHITE, font_key='Oxanium')
 
-            # --- BOSS HUD ---
             if boss_active and boss:
                 bar_w = 400
                 bar_h = 20
@@ -1229,28 +1239,20 @@ def main():
                 hp_value_text = f"HP: {int(boss.hp)} / {boss.max_hp}"
                 draw_text_center(game_surface, hp_value_text, 16, WIDTH//2, 122, BLACK, font_key='Oxanium')
             
-            # --- WAVE TRANSITION TEXT ---
             if in_wave_transition:
-                # Background gelap transparan
                 overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
                 overlay.fill((0, 0, 0, 150))
                 game_surface.blit(overlay, (0,0))
-                
-                # Teks Kedip-kedip
                 alpha = abs(math.sin(pygame.time.get_ticks() * 0.005)) * 255
                 txt_color = (255, 255, 255)
-                
                 next_wave_num = current_wave + 1
                 msg = f"WAVE {current_wave} COMPLETE!"
                 sub_msg = f"GET READY FOR WAVE {next_wave_num}..."
-                
                 if next_wave_num % 5 == 0:
                     sub_msg = "WARNING: BOSS APPROACHING!"
                     txt_color = RED
-
                 draw_text_center(game_surface, msg, 50, WIDTH//2, HEIGHT//2 - 50, NEON_BLUE, font_key='RussoOne')
                 draw_text_center(game_surface, sub_msg, 30, WIDTH//2, HEIGHT//2 + 20, txt_color, font_key='Orbitron')
-
 
             cursor_color = (0, 255, 0) if current_gesture == "TEMBAK" else (255, 0, 0) if current_gesture == "ULTI" else WHITE
             if not player.hidden:
@@ -1261,9 +1263,49 @@ def main():
             hint_ulti = "Lipat Jari/B"
             draw_text_center(game_surface, f"Gerak: {hint_cv} | Tembak: {hint_shoot} | Ulti: {hint_ulti} | Pause: P/Esc", 18, WIDTH//2, HEIGHT - 30, WHITE, font_key='Oxanium')
 
+        elif game_state == 'calibrate':
+            # --- Calibration Screen ---
+            game_surface.fill(BLACK)
+            bg_y += 1
+            rel_y = bg_y % background_img.get_height()
+            game_surface.blit(background_img, (0, rel_y - background_img.get_height()))
+            if rel_y < HEIGHT:
+                game_surface.blit(background_img, (0, rel_y))
+
+            draw_text_center(game_surface, "KALIBRASI KAMERA", 50, WIDTH//2, 100, NEON_BLUE, font_key='RussoOne')
+            draw_text_center(game_surface, "Letakkan tangan Anda di dalam kotak", 24, WIDTH//2, 160, WHITE, font_key='Oxanium')
+            
+            # Kotak Target
+            rect_x, rect_y = WIDTH//2 - 100, HEIGHT//2 - 100
+            rect_color = RED
+            
+            with cv_lock:
+                hand_present = latest_cv.get('hand_present')
+            
+            if hand_present:
+                rect_color = GREEN
+                calibration_timer += 1
+            else:
+                calibration_timer = 0
+            
+            pygame.draw.rect(game_surface, rect_color, (rect_x, rect_y, 200, 200), 3)
+            
+            # Progress Bar
+            progress = min(1.0, calibration_timer / 90) # 90 frames approx 2 sec
+            draw_bar_modern(game_surface, WIDTH//2 - 150, HEIGHT//2 + 150, 300, 20, progress * 300, 300, RED, GREEN)
+            
+            status_text = "MENDETEKSI..." if not hand_present else "TAHAN POSISI..."
+            if progress >= 1.0:
+                status_text = "SELESAI! MEMUAT..."
+                game_state = 'start' # Auto start
+                camera_on = True # Auto enable camera mode
+            
+            draw_text_center(game_surface, status_text, 20, WIDTH//2, HEIGHT//2 + 120, rect_color, font_key='Orbitron')
+            draw_text_center(game_surface, "Tekan ENTER untuk lewati (Mode Keyboard)", 18, WIDTH//2, HEIGHT - 50, YELLOW, font_key='Oxanium')
+
+
         elif game_state == 'start':
             game_surface.fill(BLACK)
-            # Parallax di menu start juga
             bg_y += 1
             rel_y = bg_y % background_img.get_height()
             game_surface.blit(background_img, (0, rel_y - background_img.get_height()))
@@ -1281,7 +1323,11 @@ def main():
             if not camera_available:
                 toggle_text = "Kamera Tidak Terdeteksi"
                 mode_color = RED
-            
+            elif camera_on:
+                mode_text = "MODE KONTROL: TANGAN"
+                mode_color = GREEN
+                toggle_text = "Tekan K untuk Kembali ke Keyboard"
+
             draw_hud_panel_modern(game_surface, GAME_W - 300, 10, 290, 70, UI_BG)
             draw_text(game_surface, mode_text, 18, GAME_W - 280, 20, mode_color, font_key='Oxanium')
             draw_text(game_surface, toggle_text, 18, GAME_W - 280, 45, YELLOW, font_key='Oxanium')
@@ -1307,7 +1353,6 @@ def main():
             highscore = score
             with open(HIGH_SCORE_FILE, 'w') as f: f.write(str(highscore))
 
-        # Update Shake Logic
         shake_offset = (0, 0)
         if shake_intensity > 0:
              shake_intensity -= 1
