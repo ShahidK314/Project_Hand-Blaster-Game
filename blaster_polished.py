@@ -59,6 +59,7 @@ cv_running.set()
 latest_cv = {
     'results': None,
     'index_x_frac': 0.5,
+    'index_y_frac': 0.5, # Tambahan untuk menu vertikal
     'pinch_distance': None,
     'index_folded': False,
     'middle_folded': False,
@@ -103,8 +104,11 @@ def camera_thread_loop():
                 wrist = hand_landmarks.landmark[mp_hands.HandLandmark.WRIST]
                 
                 raw_x = index_tip.x 
+                raw_y = index_tip.y # Ambil Y juga untuk menu
                 clamped_x = max(0.0, min(1.0, (raw_x - 0.1) / 0.8))
+                
                 latest_cv['index_x_frac'] = clamped_x
+                latest_cv['index_y_frac'] = raw_y
                 
                 latest_cv['pinch_distance'] = get_distance(thumb_tip, index_tip)
                 latest_cv['index_folded'] = get_distance(index_tip, wrist) < get_distance(hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_MCP], wrist)
@@ -135,6 +139,54 @@ GREEN = (0, 255, 0)
 UI_BG = (20, 20, 40, 220) 
 
 # --- CLASSES ---
+
+class MenuButton:
+    def __init__(self, x, y, w, h, text, color=NEON_BLUE):
+        self.rect = pygame.Rect(x, y, w, h)
+        self.text = text
+        self.color = color
+        self.hover_start_time = 0
+        self.is_hovered = False
+        self.progress = 0.0 # 0.0 to 1.0
+        self.activation_time = 1500 # ms to activate
+
+    def update(self, cursor_pos, current_time):
+        # Reset jika tidak hover
+        if not self.rect.collidepoint(cursor_pos):
+            self.is_hovered = False
+            self.progress = 0.0
+            self.hover_start_time = 0
+            return False
+
+        # Jika baru hover
+        if not self.is_hovered:
+            self.is_hovered = True
+            self.hover_start_time = current_time
+        
+        # Hitung progress
+        elapsed = current_time - self.hover_start_time
+        self.progress = min(1.0, elapsed / self.activation_time)
+
+        # Cek apakah teraktivasi
+        if elapsed >= self.activation_time:
+            self.progress = 0.0
+            self.hover_start_time = 0 # Reset biar gak spam click
+            return True
+        return False
+
+    def draw(self, surf):
+        # Draw Border
+        border_color = WHITE if self.is_hovered else self.color
+        pygame.draw.rect(surf, border_color, self.rect, 2, border_radius=10)
+        
+        # Draw Fill Progress
+        if self.progress > 0:
+            fill_rect = pygame.Rect(self.rect.x, self.rect.y, int(self.rect.width * self.progress), self.rect.height)
+            pygame.draw.rect(surf, (0, 255, 0), fill_rect, border_radius=10)
+
+        # Draw Text
+        draw_text_center(surf, self.text, 30, self.rect.centerx, self.rect.centery - 15, WHITE, 'Orbitron')
+
 
 class Particle(pygame.sprite.Sprite):
     def __init__(self, x, y, color, size, velocity, lifetime):
@@ -630,10 +682,16 @@ def main():
     clock = pygame.time.Clock()
     display_info = pygame.display.Info()
 
-    def blit_centered(shake_offset=(0,0)):
+    def blit_centered(shake_offset=(0,0), flash_alpha=0):
         try:
             scaled = pygame.transform.scale(game_surface, (display_info.current_w, display_info.current_h))
             screen.blit(scaled, shake_offset)
+            
+            if flash_alpha > 0:
+                flash_surf = pygame.Surface((display_info.current_w, display_info.current_h))
+                flash_surf.fill(WHITE)
+                flash_surf.set_alpha(flash_alpha)
+                screen.blit(flash_surf, (0,0))
         except:
             screen.blit(game_surface, shake_offset)
 
@@ -720,16 +778,22 @@ def main():
     transition_timer = 0
     boss_active = False
 
-    # Parallax & Shake Variables
+    # Parallax & Shake & VFX Variables
     bg_y = 0
     shake_intensity = 0
+    white_flash_alpha = 0
+    slow_mo_active = False
+    slow_mo_timer = 0
 
     # Combo System
     combo_count = 0
     combo_timer = 0 # Frames
 
-    # Calibration
+    # Calibration & Menu
     calibration_timer = 0
+    # Buttons for Start Screen
+    btn_start = MenuButton(GAME_W//2 - 100, GAME_H//2 + 50, 200, 60, "START", NEON_BLUE)
+    btn_quit = MenuButton(GAME_W//2 - 100, GAME_H//2 + 130, 200, 60, "QUIT", RED)
 
     def spawn_enemy():
         # Random pick enemy type
@@ -866,7 +930,13 @@ def main():
 
     # --- Loop Utama ---
     while running:
-        clock.tick(FPS)
+        # SLOW MOTION LOGIC
+        if slow_mo_active:
+            clock.tick(15) # Lambat
+            if pygame.time.get_ticks() > slow_mo_timer:
+                slow_mo_active = False
+        else:
+            clock.tick(FPS)
         
         for event in pygame.event.get():
             if event.type == pygame.QUIT: running = False
@@ -910,6 +980,25 @@ def main():
                     if event.key == pygame.K_RETURN:
                         reset_game()
                         game_state = 'play'
+
+        # --- HAND INTERACTION LOGIC (GLOBAL) ---
+        cursor_screen_x, cursor_screen_y = 0, 0
+        if camera_on and camera_available:
+             with cv_lock:
+                 frac_x = latest_cv.get('index_x_frac', 0.5)
+                 frac_y = latest_cv.get('index_y_frac', 0.5)
+             cursor_screen_x = int(frac_x * GAME_W)
+             cursor_screen_y = int(frac_y * GAME_H)
+
+        if game_state == 'start':
+            # --- START MENU HAND INTERACTION ---
+            current_time = pygame.time.get_ticks()
+            if camera_on:
+                if btn_start.update((cursor_screen_x, cursor_screen_y), current_time):
+                    reset_game()
+                    game_state = 'play'
+                if btn_quit.update((cursor_screen_x, cursor_screen_y), current_time):
+                    running = False
 
         if game_state == 'play':
             current_gesture = "DIAM"
@@ -986,15 +1075,12 @@ def main():
 
             # --- WAVE LOGIC (SAFEGUARD ADDED) ---
             if not boss_active and not in_wave_transition:
-                # SAFEGUARD: Jika layar kosong DAN kuota sudah habis -> Paksa lanjut wave
-                # Ini memperbaiki bug "1 enemy left" yang stuck
                 all_enemies_dead = (len(enemies) == 0)
                 quota_met = (enemies_killed_in_wave >= wave_quota) or (enemies_spawned_in_wave >= wave_quota)
                 
                 if all_enemies_dead and quota_met:
                     in_wave_transition = True
                     transition_timer = pygame.time.get_ticks()
-                    
                     if (current_wave + 1) % 5 == 0:
                         pass 
                 else:
@@ -1027,7 +1113,6 @@ def main():
                     if now - boss.last_shot >= boss.shoot_delay:
                         boss.last_shot = now
                         boss_shoot_sound.play()
-                        # Boss patterns (simplified for brevity, logic remains same)
                         if boss.hp > boss.max_hp * 0.5:
                             boss.shoot_delay = 900 
                             bb = BossBullet(boss.rect.centerx, boss.rect.bottom, vy=6)
@@ -1062,12 +1147,19 @@ def main():
                         boss = None
                         boss_active = False
                         ulti_meter = ULTI_THRESHOLD
-                        shake_intensity = 30 
+                        
+                        # --- TRIGGER SLOW MO & FLASH ---
+                        slow_mo_active = True
+                        slow_mo_timer = pygame.time.get_ticks() + 2000 # 2 detik slow mo
+                        white_flash_alpha = 255 # Flash penuh
+                        shake_intensity = 50 
+                        
                         play_music(music_normal)
-                        for _ in range(5):
+                        for _ in range(10): # Banyak ledakan
                             ex = Explosion((random.randint(200,600), random.randint(100,300)))
                             all_sprites.add(ex)
                         for bb in enemy_bullets: bb.kill()
+                        
                         in_wave_transition = True
                         transition_timer = pygame.time.get_ticks()
                         break
@@ -1086,11 +1178,9 @@ def main():
                         all_sprites.add(p)
 
                     if en.hp <= 0:
-                        # COMBO SYSTEM
                         combo_count += 1
-                        combo_timer = 150 # Reset timer (approx 3 sec)
-                        combo_bonus = 1 + (combo_count * 0.1) # 10% bonus per combo
-                        
+                        combo_timer = 150 
+                        combo_bonus = 1 + (combo_count * 0.1) 
                         score += int(en.score_val * combo_bonus)
                         enemies_killed_in_wave += 1 
                         expl_sound.play()
@@ -1140,7 +1230,6 @@ def main():
                          player.invincible_duration = 2000 
                          expl_sound.play() 
                     else:
-                        # FIX: Hitung kill jika nabrak musuh
                         if hits_enemies:
                             for en in hits_enemies:
                                 enemies_killed_in_wave += 1
@@ -1151,7 +1240,7 @@ def main():
                         player.lives -= 1
                         player.hide()
                         shake_intensity = 20 
-                        combo_count = 0 # Reset Combo
+                        combo_count = 0 
                         player_target_x = WIDTH // 2 
                         if player.lives <= 0: game_state = 'gameover'
         
@@ -1198,7 +1287,6 @@ def main():
             w_color = (0, 255, 255) if player.shield_active else YELLOW
             draw_text(game_surface, f"WEAPON: {weapon_text}", 18, WIDTH - 340, 45, w_color, font_key='Oxanium')
             
-            # Combo HUD
             if combo_count > 1:
                 draw_text(game_surface, f"x{combo_count} COMBO!", 24, WIDTH - 340, 75, ORANGE, font_key='RussoOne')
 
@@ -1264,7 +1352,6 @@ def main():
             draw_text_center(game_surface, f"Gerak: {hint_cv} | Tembak: {hint_shoot} | Ulti: {hint_ulti} | Pause: P/Esc", 18, WIDTH//2, HEIGHT - 30, WHITE, font_key='Oxanium')
 
         elif game_state == 'calibrate':
-            # --- Calibration Screen ---
             game_surface.fill(BLACK)
             bg_y += 1
             rel_y = bg_y % background_img.get_height()
@@ -1275,13 +1362,10 @@ def main():
             draw_text_center(game_surface, "KALIBRASI KAMERA", 50, WIDTH//2, 100, NEON_BLUE, font_key='RussoOne')
             draw_text_center(game_surface, "Letakkan tangan Anda di dalam kotak", 24, WIDTH//2, 160, WHITE, font_key='Oxanium')
             
-            # Kotak Target
             rect_x, rect_y = WIDTH//2 - 100, HEIGHT//2 - 100
             rect_color = RED
-            
             with cv_lock:
                 hand_present = latest_cv.get('hand_present')
-            
             if hand_present:
                 rect_color = GREEN
                 calibration_timer += 1
@@ -1289,16 +1373,14 @@ def main():
                 calibration_timer = 0
             
             pygame.draw.rect(game_surface, rect_color, (rect_x, rect_y, 200, 200), 3)
-            
-            # Progress Bar
-            progress = min(1.0, calibration_timer / 90) # 90 frames approx 2 sec
+            progress = min(1.0, calibration_timer / 90)
             draw_bar_modern(game_surface, WIDTH//2 - 150, HEIGHT//2 + 150, 300, 20, progress * 300, 300, RED, GREEN)
             
             status_text = "MENDETEKSI..." if not hand_present else "TAHAN POSISI..."
             if progress >= 1.0:
                 status_text = "SELESAI! MEMUAT..."
-                game_state = 'start' # Auto start
-                camera_on = True # Auto enable camera mode
+                game_state = 'start'
+                camera_on = True 
             
             draw_text_center(game_surface, status_text, 20, WIDTH//2, HEIGHT//2 + 120, rect_color, font_key='Orbitron')
             draw_text_center(game_surface, "Tekan ENTER untuk lewati (Mode Keyboard)", 18, WIDTH//2, HEIGHT - 50, YELLOW, font_key='Oxanium')
@@ -1314,8 +1396,18 @@ def main():
 
             draw_text_center(game_surface, "BLASTER CV", 64, GAME_W//2, GAME_H//4, NEON_BLUE, font_key='RussoOne')
             draw_text_center(game_surface, f"High Score: {highscore}", 24, GAME_W//2, GAME_H//2 - 20, WHITE, font_key='Orbitron')
-            draw_text_center(game_surface, "Tekan ENTER untuk Mulai", 30, GAME_W//2, GAME_H * 4/5, YELLOW, font_key='Oxanium')
-            draw_text_center(game_surface, "Tekan Q untuk Keluar Game", 24, GAME_W//2, GAME_H * 4/5 + 40, RED, font_key='Oxanium')
+            
+            # --- START MENU HAND CURSOR ---
+            if camera_on:
+                pygame.draw.circle(game_surface, GREEN, (cursor_screen_x, cursor_screen_y), 15, 3)
+                pygame.draw.circle(game_surface, (0,255,0,100), (cursor_screen_x, cursor_screen_y), 5)
+                # Draw Buttons
+                btn_start.draw(game_surface)
+                btn_quit.draw(game_surface)
+                draw_text_center(game_surface, "Arahkan tangan ke tombol untuk memilih", 18, GAME_W//2, GAME_H - 50, YELLOW, font_key='Oxanium')
+            else:
+                draw_text_center(game_surface, "Tekan ENTER untuk Mulai", 30, GAME_W//2, GAME_H * 4/5, YELLOW, font_key='Oxanium')
+                draw_text_center(game_surface, "Tekan Q untuk Keluar Game", 24, GAME_W//2, GAME_H * 4/5 + 40, RED, font_key='Oxanium')
             
             mode_text = "MODE KONTROL: KEYBOARD"
             toggle_text = "Tekan K untuk Uji Coba Kamera"
@@ -1353,12 +1445,18 @@ def main():
             highscore = score
             with open(HIGH_SCORE_FILE, 'w') as f: f.write(str(highscore))
 
+        # Update Shake Logic
         shake_offset = (0, 0)
         if shake_intensity > 0:
              shake_intensity -= 1
              shake_offset = (random.randint(-int(shake_intensity), int(shake_intensity)), random.randint(-int(shake_intensity), int(shake_intensity)))
 
-        blit_centered(shake_offset)
+        # Update Flash Logic
+        if white_flash_alpha > 0:
+            white_flash_alpha -= 5
+            if white_flash_alpha < 0: white_flash_alpha = 0
+
+        blit_centered(shake_offset, white_flash_alpha)
         pygame.display.flip()
 
     cv_running.clear()
