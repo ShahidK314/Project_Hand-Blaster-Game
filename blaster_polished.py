@@ -233,7 +233,6 @@ class PowerUp(pygame.sprite.Sprite):
         self.speed_y = 3
         
     def update(self, player_x=None, *args):
-        # FIX: Handle jika player_x tidak diberikan (agar tidak crash di all_sprites.update())
         if player_x is None: return 
         self.rect.y += self.speed_y
         if self.rect.top > HEIGHT:
@@ -272,7 +271,6 @@ class Player(pygame.sprite.Sprite):
             self.powerup_type = p_type
 
     def update(self, target_x=None, all_sprites=None, *args):
-        # FIX: Cegah crash jika dipanggil tanpa argumen oleh Group.update()
         if target_x is None: return 
 
         now = pygame.time.get_ticks()
@@ -430,7 +428,7 @@ class Enemy(pygame.sprite.Sprite):
 
         self.rect.y += self.speed_y
         self.rect.x += self.speed_x
-        if self.rect.top > HEIGHT + 10 or self.rect.left < -25 or self.rect.right > WIDTH + 50:
+        if self.rect.top > HEIGHT + 10 or self.rect.left < -50 or self.rect.right > WIDTH + 50:
             self.reset_pos()
 
 class ZigZagEnemy(Enemy):
@@ -973,8 +971,9 @@ def main():
 
             # --- WAVE LOGIC ---
             if not boss_active and not in_wave_transition:
-                # Cek apakah wave selesai?
-                if enemies_killed_in_wave >= wave_quota and len(enemies) == 0:
+                # SAFEGUARD: Jika musuh habis dan kuota spawn sudah lewat/habis, paksa next wave
+                # Ini mencegah bug "1 enemy left" tapi layar kosong
+                if len(enemies) == 0 and (enemies_killed_in_wave >= wave_quota or enemies_spawned_in_wave >= wave_quota):
                     in_wave_transition = True
                     transition_timer = pygame.time.get_ticks()
                     
@@ -1122,6 +1121,8 @@ def main():
                 hits_enemies = pygame.sprite.spritecollide(player, enemies, True, pygame.sprite.collide_circle)
             
                 if hits_bullets or hits_enemies:
+                    # FIX: Jika tabrakan, hitung sebagai kill juga agar wave tidak macet
+                    # Kecuali shield aktif
                     if player.shield_active:
                          player.shield_active = False
                          player.invincible = True
@@ -1129,6 +1130,12 @@ def main():
                          player.invincible_duration = 2000 
                          expl_sound.play() 
                     else:
+                        # Jika tertabrak musuh (bukan peluru), hitung musuh itu mati
+                        if hits_enemies:
+                            for en in hits_enemies:
+                                enemies_killed_in_wave += 1
+                                en.kill() # Pastikan musuh yang nabrak hilang
+
                         player_die_sound.play()
                         all_sprites.add(Explosion(player.rect.center))
                         player.lives -= 1
