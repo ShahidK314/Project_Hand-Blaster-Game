@@ -1,0 +1,11 @@
+# Abaikan Virtual Environment
+mp_env311/
+env/
+venv/
+
+# Abaikan file cache Python (sampah sistem)
+__pycache__/
+*.pyc
+
+# Opsional: Abaikan highscore lokal (biar score kamu tidak tertimpa score orang lain)
+highscore.txt
