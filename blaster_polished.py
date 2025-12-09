@@ -47,9 +47,9 @@ def get_pixel_dist(center1, center2):
 cap = cv2.VideoCapture(0)
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
-    model_complexity=1,              # Tetap 1 agar akurat
+    model_complexity=1,              
     max_num_hands=1,
-    min_detection_confidence=0.5,    # Tetap 0.5 agar sensitif
+    min_detection_confidence=0.5,    
     min_tracking_confidence=0.5)
 
 camera_available = cap.isOpened()
@@ -74,11 +74,9 @@ def camera_thread_loop():
             time.sleep(0.05)
             continue
         
-        # Mirror image agar gerakan natural
         image = cv2.flip(image, 1)
-        
         now = time.time()
-        # Batasi proses CV agar tidak memakan CPU (approx 20 FPS processing)
+        
         if now - last_process < 0.05:
             time.sleep(0.01)
             continue
@@ -105,7 +103,6 @@ def camera_thread_loop():
                 wrist = hand_landmarks.landmark[mp_hands.HandLandmark.WRIST]
                 
                 raw_x = index_tip.x 
-                # Kalibrasi area gerak
                 clamped_x = max(0.0, min(1.0, (raw_x - 0.1) / 0.8))
                 latest_cv['index_x_frac'] = clamped_x
                 
@@ -133,9 +130,49 @@ BLACK = (0, 0, 0)
 YELLOW = (255, 255, 0)
 RED = (255, 0, 0)
 NEON_BLUE = (0, 255, 255) 
+ORANGE = (255, 165, 0)
 UI_BG = (20, 20, 40, 220) 
 
 # --- CLASSES ---
+
+class Particle(pygame.sprite.Sprite):
+    def __init__(self, x, y, color, size, velocity, lifetime):
+        super().__init__()
+        self.image = pygame.Surface((size, size))
+        self.image.fill(color)
+        self.rect = self.image.get_rect(center=(x, y))
+        self.vel = velocity
+        self.lifetime = lifetime
+        self.original_lifetime = lifetime
+        self.color = color
+        self.size = size
+
+    def update(self, *args):
+        self.rect.x += self.vel[0]
+        self.rect.y += self.vel[1]
+        self.lifetime -= 1
+        
+        alpha = int((self.lifetime / self.original_lifetime) * 255)
+        self.image.set_alpha(alpha)
+        
+        if self.lifetime <= 0:
+            self.kill()
+
+class FloatingText(pygame.sprite.Sprite):
+    def __init__(self, x, y, text, color):
+        super().__init__()
+        font = load_font('Oxanium', 20)
+        self.image = font.render(text, True, color)
+        self.rect = self.image.get_rect(center=(x, y))
+        self.vel_y = -2
+        self.lifetime = 40
+
+    def update(self, *args):
+        self.rect.y += self.vel_y
+        self.lifetime -= 1
+        if self.lifetime <= 0:
+            self.kill()
+
 class Explosion(pygame.sprite.Sprite):
     def __init__(self, center, scale=1.0):
         super().__init__()
@@ -181,6 +218,13 @@ class PowerUp(pygame.sprite.Sprite):
             self.image = pu_spread_img
         elif self.type == 'missile':
             self.image = pu_missile_img
+        elif self.type == 'shield':
+            self.image = pygame.Surface((30, 30), pygame.SRCALPHA)
+            pygame.draw.circle(self.image, (0, 255, 255), (15, 15), 15)
+            pygame.draw.circle(self.image, WHITE, (15, 15), 13, 2)
+            font = pygame.font.SysFont('arial', 20, bold=True)
+            txt = font.render("P", True, BLACK)
+            self.image.blit(txt, (15 - txt.get_width()//2, 15 - txt.get_height()//2))
         else:
             self.image = bomb_img 
             
@@ -188,7 +232,8 @@ class PowerUp(pygame.sprite.Sprite):
         self.rect.center = center
         self.speed_y = 3
         
-    def update(self, player_x):
+    def update(self, player_x=None, *args):
+        if player_x is None: return 
         self.rect.y += self.speed_y
         if self.rect.top > HEIGHT:
             self.kill()
@@ -211,18 +256,30 @@ class Player(pygame.sprite.Sprite):
         self.hide_timer = pygame.time.get_ticks()
         
         self.powerup_type = 'normal' 
-        self.powerup_time = 0
-        
         self.invincible = False
         self.invincible_timer = pygame.time.get_ticks()
         self.invincible_duration = 3000 
-        
-    def powerup(self, p_type):
-        self.powerup_type = p_type
+        self.shield_active = False
 
-    def update(self, target_x):
+    def powerup(self, p_type):
+        if p_type == 'shield':
+            self.shield_active = True
+            self.invincible = True
+            self.invincible_timer = pygame.time.get_ticks()
+            self.invincible_duration = 5000 
+        else:
+            self.powerup_type = p_type
+
+    def update(self, target_x=None, all_sprites=None, *args):
+        if target_x is None: return 
+
         now = pygame.time.get_ticks()
         
+        # Engine Trail Particles
+        if not self.hidden and random.random() < 0.3 and all_sprites:
+            p = Particle(self.rect.centerx, self.rect.bottom, (100, 200, 255), random.randint(2,5), (random.uniform(-1,1), random.uniform(1,3)), 20)
+            all_sprites.add(p)
+
         if self.invincible:
             if now - self.invincible_timer > self.invincible_duration:
                 self.invincible = False
@@ -230,6 +287,8 @@ class Player(pygame.sprite.Sprite):
             else:
                 alpha = 128 if (now // 100) % 2 == 0 else 255
                 self.image.set_alpha(alpha)
+        else:
+            self.image.set_alpha(255)
 
         if self.hidden:
             if now - self.hide_timer > 1000:
@@ -238,7 +297,7 @@ class Player(pygame.sprite.Sprite):
                 self.rect.bottom = HEIGHT - 10
                 self.invincible = True 
                 self.invincible_timer = now
-                self.image.set_alpha(128) 
+                self.shield_active = True 
         
         if not self.hidden:
             dx = target_x - self.rect.centerx
@@ -255,7 +314,6 @@ class Player(pygame.sprite.Sprite):
     def shoot(self, all_sprites, bullets_group):
         if not self.hidden:
             now = pygame.time.get_ticks()
-            
             current_delay = self.default_delay
             if self.powerup_type == 'missile':
                 current_delay = 500
@@ -293,6 +351,8 @@ class Player(pygame.sprite.Sprite):
 
     def hide(self):
         self.hidden = True
+        self.shield_active = False
+        self.powerup_type = 'normal'
         self.hide_timer = pygame.time.get_ticks()
         self.rect.center = (WIDTH / 2, HEIGHT + 200)
 
@@ -315,28 +375,125 @@ class Bullet(pygame.sprite.Sprite):
         if self.rect.bottom < 0 or self.rect.left < 0 or self.rect.right > WIDTH:
             self.kill()
 
-class Enemy(pygame.sprite.Sprite):
-    def __init__(self):
+class EnemyBullet(pygame.sprite.Sprite):
+    def __init__(self, x, y):
         super().__init__()
-        self.image = enemy_img
+        self.image = pygame.transform.scale(boss_bullet_img, (15, 15)) 
         self.image.set_colorkey(BLACK)
         self.rect = self.image.get_rect()
-        self.radius = int(self.rect.width * .85 / 2)
-        
-        max_x = max(0, WIDTH - self.rect.width)
-        self.rect.x = random.randrange(0, max_x) if max_x > 0 else 0
-        self.rect.y = random.randrange(-150, -100)
-        self.speed_y = random.randrange(1, 4)
-        self.speed_x = random.randrange(-2, 2)
+        self.rect.centerx = x
+        self.rect.top = y
+        self.speed_y = 6
 
     def update(self, *args):
         self.rect.y += self.speed_y
-        self.rect.x += self.speed_x
-        if self.rect.top > HEIGHT + 10 or self.rect.left < -25 or self.rect.right > WIDTH + 20:
-            self.rect.x = random.randrange(0, max(1, WIDTH - self.rect.width))
-            self.rect.y = random.randrange(-100, -40)
-            self.speed_y = random.randrange(1, 4)
+        if self.rect.top > HEIGHT:
+            self.kill()
 
+# --- ENEMY CLASSES (VARIETY) ---
+
+class Enemy(pygame.sprite.Sprite):
+    def __init__(self):
+        super().__init__()
+        self.image = enemy_img.copy()
+        self.image.set_colorkey(BLACK)
+        self.rect = self.image.get_rect()
+        self.radius = int(self.rect.width * .85 / 2)
+        self.reset_pos()
+        self.hp = 1 # Musuh biasa 1 hit mati
+        self.score_val = 10
+        self.hit_timer = 0
+
+    def reset_pos(self):
+        max_x = max(0, WIDTH - self.rect.width)
+        self.rect.x = random.randrange(0, max_x) if max_x > 0 else 0
+        self.rect.y = random.randrange(-150, -100)
+        self.speed_y = random.randrange(2, 5)
+        self.speed_x = random.randrange(-1, 2)
+
+    def hit(self):
+        self.hit_timer = pygame.time.get_ticks()
+        self.image.set_alpha(150)
+
+    def shoot(self, all_sprites, enemy_bullets):
+        if random.random() < 0.005:
+            eb = EnemyBullet(self.rect.centerx, self.rect.bottom)
+            all_sprites.add(eb)
+            enemy_bullets.add(eb)
+
+    def update(self, *args):
+        if self.hit_timer > 0 and pygame.time.get_ticks() - self.hit_timer > 100:
+             self.image.set_alpha(255)
+             self.hit_timer = 0
+
+        self.rect.y += self.speed_y
+        self.rect.x += self.speed_x
+        if self.rect.top > HEIGHT + 10 or self.rect.left < -50 or self.rect.right > WIDTH + 50:
+            self.reset_pos()
+
+class ZigZagEnemy(Enemy):
+    def __init__(self):
+        super().__init__()
+        # Tint warna hijau agar beda
+        self.image.fill((50, 255, 50, 100), special_flags=pygame.BLEND_RGB_MULT)
+        self.rect = self.image.get_rect()
+        self.reset_pos()
+        self.t = random.random() * 100
+        self.score_val = 20
+        self.speed_y = 3
+
+    def update(self, *args):
+        super().update()
+        self.t += 0.1
+        self.rect.x += int(math.sin(self.t) * 5) # Gerakan gelombang
+
+class TankerEnemy(Enemy):
+    def __init__(self):
+        super().__init__()
+        # Resize jadi lebih besar
+        raw = pygame.transform.scale(enemy_img, (80, 64))
+        self.image = raw
+        self.image.set_colorkey(BLACK)
+        # Tint warna merah agar terlihat kuat
+        self.image.fill((255, 100, 100, 100), special_flags=pygame.BLEND_RGB_MULT)
+        self.rect = self.image.get_rect()
+        self.radius = int(self.rect.width * 0.4)
+        self.reset_pos()
+        self.hp = 5 # Butuh 5 hit
+        self.speed_y = 1 # Lambat
+        self.score_val = 50
+
+    def update(self, *args):
+        if self.hit_timer > 0 and pygame.time.get_ticks() - self.hit_timer > 100:
+             self.image.set_alpha(255)
+             self.hit_timer = 0
+        
+        self.rect.y += self.speed_y
+        # Tidak ada gerakan horizontal random (speed_x) untuk tanker, dia lurus tapi mematikan
+        if self.rect.top > HEIGHT + 10:
+            self.reset_pos()
+
+class KamikazeEnemy(Enemy):
+    def __init__(self):
+        super().__init__()
+        # Warna kuning
+        self.image.fill((255, 255, 0, 100), special_flags=pygame.BLEND_RGB_MULT)
+        self.reset_pos()
+        self.state = 'hover'
+        self.timer = pygame.time.get_ticks()
+        self.score_val = 30
+
+    def update(self, *args):
+        super().update() # Handle flash effect
+        if self.state == 'hover':
+            self.rect.y += 1
+            if pygame.time.get_ticks() - self.timer > 1500: # Diam 1.5 detik
+                self.state = 'dive'
+                self.speed_y = 12 # Ngebut banget
+        elif self.state == 'dive':
+            self.rect.y += self.speed_y
+
+# --- BOSS CLASS ---
 class Boss(pygame.sprite.Sprite):
     def __init__(self):
         super().__init__()
@@ -392,13 +549,12 @@ class BossBullet(pygame.sprite.Sprite):
         if self.rect.top > HEIGHT or self.rect.bottom < 0 or self.rect.left < -50 or self.rect.right > WIDTH + 50:
             self.kill()
 
-# --- Helper Functions (UI/HUD Modern) ---
+# --- Helper Functions UI ---
 
 def draw_text(surf, text, size, x, y, color=WHITE, font_key='Oxanium'):
     font_key_size = f"{font_key}_{size}"
     if font_key_size not in FONTS:
         FONTS[font_key_size] = load_font(font_key, size)
-        
     font = FONTS[font_key_size]
     text_surface = font.render(text, True, color)
     text_rect = text_surface.get_rect()
@@ -409,7 +565,6 @@ def draw_text_center(surf, text, size, cx, y, color=WHITE, font_key='Oxanium'):
     font_key_size = f"{font_key}_{size}"
     if font_key_size not in FONTS:
         FONTS[font_key_size] = load_font(font_key, size)
-        
     font = FONTS[font_key_size]
     text_surface = font.render(text, True, color)
     rect = text_surface.get_rect()
@@ -429,15 +584,12 @@ def draw_bar_modern(surf, x, y, w, h, current, maximum, color_start, color_end):
     
     bg_color = (60, 0, 0) if color_start == (255, 50, 50) else (40, 40, 40)
     pygame.draw.rect(surf, bg_color, (x, y, w, h), border_radius=3)
-
     if fill_w > 0:
         for i in range(fill_w):
             r = color_start[0] + (color_end[0] - color_start[0]) * (i / w)
             g = color_start[1] + (color_end[1] - color_start[1]) * (i / w)
             b = color_start[2] + (color_end[2] - color_start[2]) * (i / w)
-            
             pygame.draw.line(surf, (int(r), int(g), int(b)), (x + i, y), (x + i, y + h - 1))
-            
     pygame.draw.rect(surf, WHITE, (x, y, w, h), 2, border_radius=3)
 
 
@@ -469,12 +621,12 @@ def main():
     clock = pygame.time.Clock()
     display_info = pygame.display.Info()
 
-    def blit_centered():
+    def blit_centered(shake_offset=(0,0)):
         try:
             scaled = pygame.transform.scale(game_surface, (display_info.current_w, display_info.current_h))
-            screen.blit(scaled, (0, 0))
+            screen.blit(scaled, shake_offset)
         except:
-            screen.blit(game_surface, (0,0))
+            screen.blit(game_surface, shake_offset)
 
     # --- Load Images ---
     def load_img(name, scale=None):
@@ -544,17 +696,37 @@ def main():
     enemy_bullets = pygame.sprite.Group() 
     powerups = pygame.sprite.Group()
     explosions = pygame.sprite.Group()
+    floating_texts = pygame.sprite.Group()
     
     player = Player()
     
     boss = None
     boss_level_count = 0 
 
+    # Parallax & Shake Variables
+    bg_y = 0
+    shake_intensity = 0
+
     def spawn_enemy():
-        e = Enemy()
+        # Random pick enemy type
+        r = random.random()
+        if r < 0.6:
+            e = Enemy() # 60% Basic
+        elif r < 0.8:
+            e = ZigZagEnemy() # 20% ZigZag
+        elif r < 0.9:
+            e = KamikazeEnemy() # 10% Kamikaze
+        else:
+            e = TankerEnemy() # 10% Tanker
+            
         all_sprites.add(e)
         enemies.add(e)
     
+    def spawn_floating_text(x, y, text, color=WHITE):
+        ft = FloatingText(x, y, text, color)
+        all_sprites.add(ft)
+        floating_texts.add(ft)
+
     def reset_game():
         nonlocal score, ulti_meter, boss_level_count, boss, keyboard_control_active, next_boss_score, boss_active
         
@@ -572,11 +744,13 @@ def main():
         enemy_bullets.empty()
         powerups.empty()
         explosions.empty()
+        floating_texts.empty()
         
         player.rect.centerx = WIDTH // 2
         player.rect.bottom = HEIGHT - 10
         player.lives = 3
         player.powerup_type = 'normal'
+        player.shield_active = False # Reset shield
         player.hidden = False
         player.invincible = False 
         player.image.set_alpha(255)
@@ -614,24 +788,25 @@ def main():
     
     # Fungsi Ulti
     def execute_ulti():
-        nonlocal score, ulti_meter, next_boss_score, boss_active, boss
+        nonlocal score, ulti_meter, next_boss_score, boss_active, boss, shake_intensity
         
         if ulti_meter < ULTI_THRESHOLD:
             return 
             
         bomb_sound.play() 
         ulti_meter = 0
+        shake_intensity = 20 # Shake saat Ulti
         
         target_group = list(enemies)
         if boss_active and boss:
             target_group.append(boss)
             boss.hp -= 200 
+            spawn_floating_text(boss.rect.centerx, boss.rect.y, "200", RED)
 
         cnt = len(target_group)
         for target in target_group:
             expl = Explosion(target.rect.center, scale=1.2)
             all_sprites.add(expl)
-            
             expl_sound.play() 
             
             if target != boss:
@@ -721,7 +896,6 @@ def main():
             if keys[pygame.K_b] and ulti_meter >= ULTI_THRESHOLD:
                 current_gesture = "ULTI"
 
-
             if not keyboard_input_this_frame and not keys[pygame.K_SPACE] and camera_on:
                  keyboard_control_active = False 
 
@@ -755,8 +929,13 @@ def main():
                 elif not hand_present and not keyboard_control_active:
                     current_gesture = "TANGAN TIDAK TERDETEKSI"
             
-            all_sprites.update(player_target_x)
+            player.update(player_target_x, all_sprites) 
+            all_sprites.update() 
             powerups.update(player.rect.centerx)
+
+            # --- Update Enemy Shooting ---
+            for enemy in enemies:
+                enemy.shoot(all_sprites, enemy_bullets)
 
             # --- BOSS SPAWN & LOGIC ---
             if score >= next_boss_score and not boss_active:
@@ -764,6 +943,7 @@ def main():
                 boss = Boss()
                 all_sprites.add(boss)
                 boss_active = True
+                shake_intensity = 15 # Shake saat Boss muncul
                 play_music(music_boss)
             
             if boss_active and boss:
@@ -802,6 +982,7 @@ def main():
                     expl_sound.play()
                     expl = Explosion(hit.rect.center)
                     all_sprites.add(expl)
+                    spawn_floating_text(boss.rect.centerx, boss.rect.y + 50, str(hit.damage), ORANGE)
 
                     if boss.hp <= 0:
                         score += 100
@@ -810,6 +991,7 @@ def main():
                         boss = None
                         boss_active = False
                         ulti_meter = ULTI_THRESHOLD
+                        shake_intensity = 30 # Mega shake saat boss mati
                         play_music(music_normal)
 
                         for _ in range(5):
@@ -825,56 +1007,82 @@ def main():
                     spawn_enemy()
 
             # --- COLLISIONS ---
-            hits = pygame.sprite.groupcollide(bullets, enemies, True, True)
+            hits = pygame.sprite.groupcollide(bullets, enemies, True, False) # False agar tidak langsung mati (utk Tanker)
             for bullet, enemy_list in hits.items():
+                bullet.kill()
                 for en in enemy_list:
-                    score += 10
-                    expl_sound.play()
-                    expl = Explosion(en.rect.center)
-                    all_sprites.add(expl)
-                    ulti_meter = min(ULTI_THRESHOLD, ulti_meter + 1)
+                    en.hp -= 1
+                    en.hit() # Flash effect
+                    spawn_floating_text(en.rect.centerx, en.rect.top, str(bullet.damage))
                     
-                    if bullet.aoe_radius > 0:
-                        aoe_expl = Explosion(en.rect.center, scale=2.0)
-                        all_sprites.add(aoe_expl)
-                        nearby_enemies = []
-                        for other_en in enemies:
-                            if get_pixel_dist(en.rect.center, other_en.rect.center) < bullet.aoe_radius and other_en not in enemy_list: 
-                                nearby_enemies.append(other_en)
-                        for near_en in nearby_enemies:
-                            near_en.kill()
-                            score += 10
-                            ulti_meter = min(ULTI_THRESHOLD, ulti_meter + 1)
-                            ex = Explosion(near_en.rect.center)
-                            all_sprites.add(ex)
+                    # Spawn Hit Particles
+                    for _ in range(3):
+                        p = Particle(en.rect.centerx, en.rect.centery, YELLOW, 3, (random.uniform(-2,2), random.uniform(-2,2)), 10)
+                        all_sprites.add(p)
 
-                    if random.random() < 0.1:
-                        ptype = random.choice(['double', 'spread', 'missile'])
-                        pu = PowerUp(en.rect.center, ptype)
-                        all_sprites.add(pu)
-                        powerups.add(pu)
+                    if en.hp <= 0:
+                        score += en.score_val
+                        expl_sound.play()
+                        expl = Explosion(en.rect.center)
+                        all_sprites.add(expl)
+                        ulti_meter = min(ULTI_THRESHOLD, ulti_meter + 1)
+                        
+                        if bullet.aoe_radius > 0:
+                            aoe_expl = Explosion(en.rect.center, scale=2.0)
+                            all_sprites.add(aoe_expl)
+                            shake_intensity = 5 # Shake dikit
+                            nearby_enemies = []
+                            for other_en in enemies:
+                                if get_pixel_dist(en.rect.center, other_en.rect.center) < bullet.aoe_radius and other_en not in enemy_list: 
+                                    nearby_enemies.append(other_en)
+                            for near_en in nearby_enemies:
+                                near_en.kill()
+                                score += 10
+                                ulti_meter = min(ULTI_THRESHOLD, ulti_meter + 1)
+                                ex = Explosion(near_en.rect.center)
+                                all_sprites.add(ex)
+
+                        if random.random() < 0.1:
+                            ptype = random.choice(['double', 'spread', 'missile', 'shield'])
+                            pu = PowerUp(en.rect.center, ptype)
+                            all_sprites.add(pu)
+                            powerups.add(pu)
+                        
+                        en.kill()
 
             hits = pygame.sprite.spritecollide(player, powerups, True)
             for pu in hits:
                 bomb_sound.play()
                 player.powerup(pu.type)
+                spawn_floating_text(player.rect.centerx, player.rect.top - 20, pu.type.upper(), (0, 255, 255))
 
             if not player.invincible:
                 hits_bullets = pygame.sprite.spritecollide(player, enemy_bullets, True, pygame.sprite.collide_circle)
                 hits_enemies = pygame.sprite.spritecollide(player, enemies, True, pygame.sprite.collide_circle)
             
                 if hits_bullets or hits_enemies:
-                    player_die_sound.play()
-                    all_sprites.add(Explosion(player.rect.center))
-                    player.lives -= 1
-                    player.hide()
-                    
-                    player_target_x = WIDTH // 2 
-                    
-                    if player.lives <= 0: game_state = 'gameover'
+                    if player.shield_active:
+                         player.shield_active = False
+                         player.invincible = True
+                         player.invincible_timer = pygame.time.get_ticks()
+                         player.invincible_duration = 2000 
+                         expl_sound.play() 
+                    else:
+                        player_die_sound.play()
+                        all_sprites.add(Explosion(player.rect.center))
+                        player.lives -= 1
+                        player.hide()
+                        shake_intensity = 20 
+                        player_target_x = WIDTH // 2 
+                        if player.lives <= 0: game_state = 'gameover'
         
         # 3. Drawing
-        game_surface.blit(background_img, (0,0))
+        # Parallax Background Logic
+        bg_y += 2
+        rel_y = bg_y % background_img.get_height()
+        game_surface.blit(background_img, (0, rel_y - background_img.get_height()))
+        if rel_y < HEIGHT:
+            game_surface.blit(background_img, (0, rel_y))
         
         if player.invincible:
             temp_sprites = all_sprites.copy()
@@ -883,9 +1091,12 @@ def main():
             game_surface.blit(player.image, player.rect)
         else:
             all_sprites.draw(game_surface)
+            
+        # Gambar Lingkaran Shield
+        if player.shield_active and not player.hidden:
+             pygame.draw.circle(game_surface, (0, 255, 255), player.rect.center, player.radius + 10, 2)
 
 
-        
         if game_state == 'play':
             # --- Panel HUD Kiri Atas ---
             draw_hud_panel_modern(game_surface, 10, 10, 250, 100, UI_BG)
@@ -901,7 +1112,10 @@ def main():
             for i in range(player.lives):
                 x -= 30
                 game_surface.blit(player_mini_img, (x, 15))
-            draw_text(game_surface, f"WEAPON: {player.powerup_type.upper()}", 18, WIDTH - 340, 45, YELLOW, font_key='Oxanium')
+            
+            weapon_text = "SHIELD" if player.shield_active else player.powerup_type.upper()
+            w_color = (0, 255, 255) if player.shield_active else YELLOW
+            draw_text(game_surface, f"WEAPON: {weapon_text}", 18, WIDTH - 340, 45, w_color, font_key='Oxanium')
             
             mode_status = "KEYBOARD"
             mode_color = NEON_BLUE
@@ -951,7 +1165,13 @@ def main():
 
         elif game_state == 'start':
             game_surface.fill(BLACK)
-            game_surface.blit(background_img, (0,0))
+            # Parallax di menu start juga
+            bg_y += 1
+            rel_y = bg_y % background_img.get_height()
+            game_surface.blit(background_img, (0, rel_y - background_img.get_height()))
+            if rel_y < HEIGHT:
+                game_surface.blit(background_img, (0, rel_y))
+
             draw_text_center(game_surface, "BLASTER CV", 64, GAME_W//2, GAME_H//4, NEON_BLUE, font_key='RussoOne')
             draw_text_center(game_surface, f"High Score: {highscore}", 24, GAME_W//2, GAME_H//2 - 20, WHITE, font_key='Orbitron')
             draw_text_center(game_surface, "Tekan ENTER untuk Mulai", 30, GAME_W//2, GAME_H * 4/5, YELLOW, font_key='Oxanium')
@@ -988,7 +1208,13 @@ def main():
             highscore = score
             with open(HIGH_SCORE_FILE, 'w') as f: f.write(str(highscore))
 
-        blit_centered()
+        # Update Shake Logic
+        shake_offset = (0, 0)
+        if shake_intensity > 0:
+             shake_intensity -= 1
+             shake_offset = (random.randint(-int(shake_intensity), int(shake_intensity)), random.randint(-int(shake_intensity), int(shake_intensity)))
+
+        blit_centered(shake_offset)
         pygame.display.flip()
 
     cv_running.clear()
