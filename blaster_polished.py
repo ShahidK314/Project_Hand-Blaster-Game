@@ -136,7 +136,10 @@ RED = (255, 0, 0)
 NEON_BLUE = (0, 255, 255) 
 ORANGE = (255, 165, 0)
 GREEN = (0, 255, 0)
-GOLD = (255, 215, 0)
+# FIX: Menambahkan definisi warna SILVER dan BRONZE yang sebelumnya hilang
+GOLD = (255, 215, 0) 
+SILVER = (192, 192, 192)
+BRONZE = (205, 127, 50)
 UI_BG = (20, 20, 40, 220) 
 
 # --- CLASSES ---
@@ -315,10 +318,10 @@ class PowerUp(pygame.sprite.Sprite):
         self.speed_y = 3
         
     def update(self, player_rect=None, *args):
-        # Magnet Logic
+        # Magnet Logic: Jika player dekat, mendekat
         if player_rect:
             dist = get_pixel_dist(self.rect.center, player_rect.center)
-            if dist < 150: 
+            if dist < 150: # Magnet Range
                 dx = player_rect.centerx - self.rect.centerx
                 dy = player_rect.centery - self.rect.centery
                 angle = math.atan2(dy, dx)
@@ -369,7 +372,7 @@ class Player(pygame.sprite.Sprite):
 
         now = pygame.time.get_ticks()
         
-        # Engine Trail
+        # Engine Trail Particles
         if not self.hidden and random.random() < 0.3 and all_sprites:
             p = Particle(self.rect.centerx, self.rect.bottom, (100, 200, 255), random.randint(2,5), (random.uniform(-1,1), random.uniform(1,3)), 20)
             all_sprites.add(p)
@@ -416,6 +419,7 @@ class Player(pygame.sprite.Sprite):
                 self.last_shot = now
                 shoot_sound.play()
                 
+                # Muzzle Flash
                 flash = MuzzleFlash(self.rect.midtop)
                 all_sprites.add(flash)
                 
@@ -487,6 +491,7 @@ class EnemyBullet(pygame.sprite.Sprite):
         if self.rect.top > HEIGHT:
             self.kill()
 
+# --- TARGETING BULLET (AIMING) ---
 class TargetingBullet(pygame.sprite.Sprite):
     def __init__(self, x, y, target_x, target_y):
         super().__init__()
@@ -581,6 +586,7 @@ class TankerEnemy(Enemy):
         self.speed_y = 1 
 
     def shoot(self, all_sprites, enemy_bullets, target_pos=None):
+        # Tanker shoots aiming bullets!
         if random.random() < 0.015 and target_pos:
             tb = TargetingBullet(self.rect.centerx, self.rect.bottom, target_pos[0], target_pos[1])
             all_sprites.add(tb)
@@ -765,12 +771,14 @@ def main():
             scaled = pygame.transform.scale(game_surface, (display_info.current_w, display_info.current_h))
             screen.blit(scaled, shake_offset)
             
+            # White Flash (Explosion)
             if flash_alpha > 0:
                 flash_surf = pygame.Surface((display_info.current_w, display_info.current_h))
                 flash_surf.fill(WHITE)
                 flash_surf.set_alpha(flash_alpha)
                 screen.blit(flash_surf, (0,0))
                 
+            # Red Flash (Damage/Low HP)
             if red_overlay_alpha > 0:
                 red_surf = pygame.Surface((display_info.current_w, display_info.current_h))
                 red_surf.fill(RED)
@@ -931,6 +939,7 @@ def main():
         total_kills_session = 0
         start_time_session = time.time()
         
+        # Reset Wave
         current_wave = 1
         wave_quota = 10
         enemies_spawned_in_wave = 0
@@ -978,6 +987,7 @@ def main():
     keyboard_control_active = True 
     current_gesture = "DIAM"
     
+    # Fungsi Ulti
     def execute_ulti():
         nonlocal score, ulti_meter, boss_active, boss, shake_intensity, enemies_killed_in_wave, total_kills_session
         
@@ -988,6 +998,7 @@ def main():
         ulti_meter = 0
         shake_intensity = 30 
         
+        # Shockwave Visual
         sw = Shockwave(player.rect.centerx, player.rect.centery)
         all_sprites.add(sw)
         
@@ -1028,8 +1039,9 @@ def main():
 
     # --- Loop Utama ---
     while running:
+        # SLOW MOTION LOGIC
         if slow_mo_active:
-            clock.tick(15) 
+            clock.tick(15) # Lambat
             if pygame.time.get_ticks() > slow_mo_timer:
                 slow_mo_active = False
         else:
@@ -1088,6 +1100,7 @@ def main():
              cursor_screen_y = int(frac_y * GAME_H)
 
         if game_state == 'start':
+            # --- START MENU HAND INTERACTION ---
             current_time = pygame.time.get_ticks()
             if camera_on:
                 if btn_start.update((cursor_screen_x, cursor_screen_y), current_time):
@@ -1117,11 +1130,13 @@ def main():
             
             keyboard_input_this_frame = keys[pygame.K_LEFT] or keys[pygame.K_RIGHT]
             
+            # Combo Timer Logic
             if combo_timer > 0:
                 combo_timer -= 1
             else:
                 combo_count = 0
 
+            # 1. Kontrol Keyboard (Movement)
             if keys[pygame.K_LEFT]: 
                 player_target_x = max(player_target_x - move_speed, player.rect.width // 2)
                 keyboard_control_active = True
@@ -1143,6 +1158,7 @@ def main():
             if not keyboard_input_this_frame and not keys[pygame.K_SPACE] and camera_on:
                  keyboard_control_active = False 
 
+            # 2. Kontrol CV
             if camera_on and camera_available:
                 with cv_lock:
                     frac = latest_cv.get('index_x_frac')
@@ -1174,11 +1190,15 @@ def main():
             
             player.update(player_target_x, all_sprites) 
             all_sprites.update() 
+            
+            # --- MAGNET POWERUPS ---
             powerups.update(player.rect) 
 
             for enemy in enemies:
+                # FIX: Pass Player Position for Targeting (Aiming Enemy)
                 enemy.shoot(all_sprites, enemy_bullets, player.rect.center)
 
+            # --- WAVE LOGIC (SAFEGUARD ADDED) ---
             if not boss_active and not in_wave_transition:
                 all_enemies_dead = (len(enemies) == 0)
                 quota_met = (enemies_killed_in_wave >= wave_quota) or (enemies_spawned_in_wave >= wave_quota)
@@ -1194,6 +1214,7 @@ def main():
                             spawn_enemy()
                             enemies_spawned_in_wave += 1
 
+            # --- TRANSITION LOGIC ---
             if in_wave_transition:
                 if pygame.time.get_ticks() - transition_timer > 3000: 
                     in_wave_transition = False
@@ -1210,6 +1231,7 @@ def main():
                         enemies_spawned_in_wave = 0
                         enemies_killed_in_wave = 0
 
+            # --- BOSS LOGIC ---
             if boss_active and boss:
                 now = pygame.time.get_ticks()
                 if boss.state == 'fight':
@@ -1251,13 +1273,14 @@ def main():
                         boss_active = False
                         ulti_meter = ULTI_THRESHOLD
                         
+                        # --- TRIGGER SLOW MO & FLASH ---
                         slow_mo_active = True
-                        slow_mo_timer = pygame.time.get_ticks() + 2000 
-                        white_flash_alpha = 255 
+                        slow_mo_timer = pygame.time.get_ticks() + 2000 # 2 detik slow mo
+                        white_flash_alpha = 255 # Flash penuh
                         shake_intensity = 50 
                         
                         play_music(music_normal)
-                        for _ in range(10): 
+                        for _ in range(10): # Banyak ledakan
                             ex = Explosion((random.randint(200,600), random.randint(100,300)))
                             all_sprites.add(ex)
                         for bb in enemy_bullets: bb.kill()
@@ -1266,6 +1289,7 @@ def main():
                         transition_timer = pygame.time.get_ticks()
                         break
 
+            # --- COLLISIONS ---
             hits = pygame.sprite.groupcollide(bullets, enemies, True, False) 
             for bullet, enemy_list in hits.items():
                 bullet.kill()
@@ -1286,7 +1310,7 @@ def main():
                         score_gain = int(en.score_val * combo_bonus)
                         score += score_gain
                         
-                        spawn_floating_text(en.rect.centerx, en.rect.top - 20, f"+{score_gain}", GOLD) 
+                        spawn_floating_text(en.rect.centerx, en.rect.top - 20, f"+{score_gain}", GOLD) # Score Popup
                         
                         enemies_killed_in_wave += 1 
                         total_kills_session += 1
@@ -1350,7 +1374,7 @@ def main():
                         player.lives -= 1
                         player.hide()
                         shake_intensity = 20 
-                        red_flash_alpha = 150 # Damage Flash
+                        red_flash_alpha = 150 # DAMAGE FLASH
                         combo_count = 0 
                         player_target_x = WIDTH // 2 
                         if player.lives <= 0: game_state = 'gameover'
@@ -1362,6 +1386,7 @@ def main():
         if rel_y < HEIGHT:
             game_surface.blit(background_img, (0, rel_y))
         
+        # Menu Particles
         if game_state == 'start' or game_state == 'calibrate':
              if random.random() < 0.2:
                  p = Particle(random.randint(0, WIDTH), HEIGHT, (random.randint(50,150), 255, 255), 2, (0, -random.random()*3), 60)
