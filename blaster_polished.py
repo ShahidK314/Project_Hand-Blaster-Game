@@ -136,9 +136,7 @@ RED = (255, 0, 0)
 NEON_BLUE = (0, 255, 255) 
 ORANGE = (255, 165, 0)
 GREEN = (0, 255, 0)
-GOLD = (255, 215, 0) # Warna Rank S
-SILVER = (192, 192, 192) # Warna Rank A
-BRONZE = (205, 127, 50) # Warna Rank B
+GOLD = (255, 215, 0)
 UI_BG = (20, 20, 40, 220) 
 
 # --- CLASSES ---
@@ -317,10 +315,10 @@ class PowerUp(pygame.sprite.Sprite):
         self.speed_y = 3
         
     def update(self, player_rect=None, *args):
-        # Magnet Logic: Jika player dekat, mendekat
+        # Magnet Logic
         if player_rect:
             dist = get_pixel_dist(self.rect.center, player_rect.center)
-            if dist < 150: # Magnet Range
+            if dist < 150: 
                 dx = player_rect.centerx - self.rect.centerx
                 dy = player_rect.centery - self.rect.centery
                 angle = math.atan2(dy, dx)
@@ -371,7 +369,7 @@ class Player(pygame.sprite.Sprite):
 
         now = pygame.time.get_ticks()
         
-        # Engine Trail Particles
+        # Engine Trail
         if not self.hidden and random.random() < 0.3 and all_sprites:
             p = Particle(self.rect.centerx, self.rect.bottom, (100, 200, 255), random.randint(2,5), (random.uniform(-1,1), random.uniform(1,3)), 20)
             all_sprites.add(p)
@@ -489,7 +487,6 @@ class EnemyBullet(pygame.sprite.Sprite):
         if self.rect.top > HEIGHT:
             self.kill()
 
-# --- FITUR BARU: Targeting Bullet untuk Tanker ---
 class TargetingBullet(pygame.sprite.Sprite):
     def __init__(self, x, y, target_x, target_y):
         super().__init__()
@@ -499,7 +496,6 @@ class TargetingBullet(pygame.sprite.Sprite):
         self.rect.center = (x, y)
         
         speed = 5
-        # Hitung sudut ke player
         angle = math.atan2(target_y - y, target_x - x)
         self.vx = math.cos(angle) * speed
         self.vy = math.sin(angle) * speed
@@ -584,7 +580,6 @@ class TankerEnemy(Enemy):
         super().reset_pos()
         self.speed_y = 1 
 
-    # FITUR BARU: Tanker menembak peluru target
     def shoot(self, all_sprites, enemy_bullets, target_pos=None):
         if random.random() < 0.015 and target_pos:
             tb = TargetingBullet(self.rect.centerx, self.rect.bottom, target_pos[0], target_pos[1])
@@ -644,9 +639,15 @@ class Boss(pygame.sprite.Sprite):
         self.wave_offset = 0
 
     def update(self, *args):
+        # Lerp HP bar
         if self.draw_hp > self.hp:
             self.draw_hp -= (self.draw_hp - self.hp) * 0.1
             
+        # --- RAGE MODE (RED TINT) ---
+        if self.hp < self.max_hp * 0.25:
+            # Tint merah saat low HP
+            self.image.fill((50, 0, 0), special_flags=pygame.BLEND_RGB_ADD) 
+
         if self.state == 'entering':
             self.rect.y += 2
             if self.rect.y >= 50:
@@ -725,7 +726,6 @@ def draw_bar_modern(surf, x, y, w, h, current, maximum, color_start, color_end):
             pygame.draw.line(surf, (int(r), int(g), int(b)), (x + i, y), (x + i, y + h - 1))
     pygame.draw.rect(surf, WHITE, (x, y, w, h), 2, border_radius=3)
 
-# FITUR BARU: Calculate Rank
 def calculate_rank(score):
     if score >= 5000: return "S", GOLD
     elif score >= 3000: return "A", SILVER
@@ -765,14 +765,12 @@ def main():
             scaled = pygame.transform.scale(game_surface, (display_info.current_w, display_info.current_h))
             screen.blit(scaled, shake_offset)
             
-            # White Flash (Explosion)
             if flash_alpha > 0:
                 flash_surf = pygame.Surface((display_info.current_w, display_info.current_h))
                 flash_surf.fill(WHITE)
                 flash_surf.set_alpha(flash_alpha)
                 screen.blit(flash_surf, (0,0))
                 
-            # Red Flash (Damage/Low HP)
             if red_overlay_alpha > 0:
                 red_surf = pygame.Surface((display_info.current_w, display_info.current_h))
                 red_surf.fill(RED)
@@ -871,6 +869,7 @@ def main():
     red_flash_alpha = 0 
     slow_mo_active = False
     slow_mo_timer = 0
+    rotation_angle_shield = 0 # NEW: Shield Rotation
 
     # Combo System
     combo_count = 0
@@ -886,7 +885,7 @@ def main():
     btn_start = MenuButton(GAME_W//2 - 100, GAME_H//2 + 50, 200, 60, "START", NEON_BLUE)
     btn_quit = MenuButton(GAME_W//2 - 100, GAME_H//2 + 130, 200, 60, "QUIT", RED)
     
-    # FITUR BARU: Pause Buttons Hands-Free
+    # Pause Buttons
     btn_resume = MenuButton(GAME_W//2 - 100, GAME_H//2 + 20, 200, 60, "RESUME", NEON_BLUE)
     btn_menu = MenuButton(GAME_W//2 - 100, GAME_H//2 + 100, 200, 60, "MENU", RED)
 
@@ -932,7 +931,6 @@ def main():
         total_kills_session = 0
         start_time_session = time.time()
         
-        # Reset Wave
         current_wave = 1
         wave_quota = 10
         enemies_spawned_in_wave = 0
@@ -1093,6 +1091,8 @@ def main():
             current_time = pygame.time.get_ticks()
             if camera_on:
                 if btn_start.update((cursor_screen_x, cursor_screen_y), current_time):
+                    # NEW: Menu Audio
+                    shoot_sound.play() 
                     reset_game()
                     game_state = 'play'
                 if btn_quit.update((cursor_screen_x, cursor_screen_y), current_time):
@@ -1102,9 +1102,11 @@ def main():
             current_time = pygame.time.get_ticks()
             if camera_on:
                 if btn_resume.update((cursor_screen_x, cursor_screen_y), current_time):
+                    shoot_sound.play()
                     game_state = 'play'
                     pygame.mixer.music.unpause()
                 if btn_menu.update((cursor_screen_x, cursor_screen_y), current_time):
+                    shoot_sound.play()
                     game_state = 'start'
                     pygame.mixer.music.stop()
 
@@ -1172,12 +1174,9 @@ def main():
             
             player.update(player_target_x, all_sprites) 
             all_sprites.update() 
-            
-            # --- MAGNET POWERUPS ---
             powerups.update(player.rect) 
 
             for enemy in enemies:
-                # FIX: Pass Player Position for Targeting (Aiming Enemy)
                 enemy.shoot(all_sprites, enemy_bullets, player.rect.center)
 
             if not boss_active and not in_wave_transition:
@@ -1379,6 +1378,14 @@ def main():
             all_sprites.draw(game_surface)
             
         if player.shield_active and not player.hidden:
+             # NEW: Rotating Shield
+             rotation_angle_shield += 5
+             for offset in [0, 120, 240]:
+                 rad = math.radians(rotation_angle_shield + offset)
+                 sx = player.rect.centerx + math.cos(rad) * (player.radius + 15)
+                 sy = player.rect.centery + math.sin(rad) * (player.radius + 15)
+                 pygame.draw.circle(game_surface, (0, 255, 255), (int(sx), int(sy)), 5)
+             
              pygame.draw.circle(game_surface, (0, 255, 255), player.rect.center, player.radius + 10, 2)
 
 
