@@ -759,7 +759,7 @@ def main():
         pass
     
     screen = pygame.display.set_mode((screen_w, screen_h), pygame.FULLSCREEN)
-    pygame.display.set_caption("BLASTER CV GAME")
+    pygame.display.set_caption("HAND-BLASTER SQUADRON GAME")
     GAME_W, GAME_H = 960, 720
     WIDTH, HEIGHT = GAME_W, GAME_H 
     game_surface = pygame.Surface((GAME_W, GAME_H))
@@ -1545,7 +1545,7 @@ def main():
             if rel_y < HEIGHT:
                 game_surface.blit(background_img, (0, rel_y))
 
-            draw_text_center(game_surface, "BLASTER CV", 64, GAME_W//2, GAME_H//4, NEON_BLUE, font_key='RussoOne')
+            draw_text_center(game_surface, "HAND-BLASTER SQUADRON", 64, GAME_W//2, GAME_H//4, NEON_BLUE, font_key='RussoOne')
             draw_text_center(game_surface, f"High Score: {highscore}", 24, GAME_W//2, GAME_H//2 - 20, WHITE, font_key='Orbitron')
             
             # --- START MENU HAND CURSOR ---
