@@ -136,6 +136,7 @@ RED = (255, 0, 0)
 NEON_BLUE = (0, 255, 255) 
 ORANGE = (255, 165, 0)
 GREEN = (0, 255, 0)
+PURPLE = (200, 0, 200)
 UI_BG = (20, 20, 40, 220) 
 
 # --- CLASSES ---
@@ -193,7 +194,7 @@ class Shockwave(pygame.sprite.Sprite):
         self.alpha = 255
 
     def update(self, *args):
-        self.radius += 25  # Expand speed
+        self.radius += 25 
         self.width = max(1, self.width - 1)
         self.alpha = max(0, self.alpha - 10)
         
@@ -201,18 +202,17 @@ class Shockwave(pygame.sprite.Sprite):
             self.kill()
             return
 
-        self.image.fill((0,0,0,0)) # Clear frame
+        self.image.fill((0,0,0,0)) 
         pygame.draw.circle(self.image, (0, 255, 255, self.alpha), (self.x, self.y), self.radius, self.width)
 
 class MuzzleFlash(pygame.sprite.Sprite):
     def __init__(self, center):
         super().__init__()
         self.image = pygame.Surface((30, 30), pygame.SRCALPHA)
-        # Gambar bintang/kilatan acak
         pts = [(15, 0), (20, 10), (30, 15), (20, 20), (15, 30), (10, 20), (0, 15), (10, 10)]
         pygame.draw.polygon(self.image, (255, 255, 200), pts)
         self.rect = self.image.get_rect(center=center)
-        self.timer = 3 # Hanya bertahan 3 frame
+        self.timer = 3 
 
     def update(self, *args):
         self.timer -= 1
@@ -235,10 +235,8 @@ class Particle(pygame.sprite.Sprite):
         self.rect.x += self.vel[0]
         self.rect.y += self.vel[1]
         self.lifetime -= 1
-        
         alpha = int((self.lifetime / self.original_lifetime) * 255)
         self.image.set_alpha(alpha)
-        
         if self.lifetime <= 0:
             self.kill()
 
@@ -359,7 +357,6 @@ class Player(pygame.sprite.Sprite):
 
         now = pygame.time.get_ticks()
         
-        # Engine Trail Particles
         if not self.hidden and random.random() < 0.3 and all_sprites:
             p = Particle(self.rect.centerx, self.rect.bottom, (100, 200, 255), random.randint(2,5), (random.uniform(-1,1), random.uniform(1,3)), 20)
             all_sprites.add(p)
@@ -406,7 +403,6 @@ class Player(pygame.sprite.Sprite):
                 self.last_shot = now
                 shoot_sound.play()
                 
-                # Muzzle Flash
                 flash = MuzzleFlash(self.rect.midtop)
                 all_sprites.add(flash)
                 
@@ -478,6 +474,26 @@ class EnemyBullet(pygame.sprite.Sprite):
         if self.rect.top > HEIGHT:
             self.kill()
 
+# --- TARGETING BULLET (AIMING) ---
+class TargetingBullet(pygame.sprite.Sprite):
+    def __init__(self, x, y, target_x, target_y):
+        super().__init__()
+        self.image = pygame.transform.scale(boss_bullet_img, (12, 12)) 
+        self.image.set_colorkey(BLACK)
+        self.rect = self.image.get_rect()
+        self.rect.center = (x, y)
+        
+        speed = 5
+        angle = math.atan2(target_y - y, target_x - x)
+        self.vx = math.cos(angle) * speed
+        self.vy = math.sin(angle) * speed
+
+    def update(self, *args):
+        self.rect.x += self.vx
+        self.rect.y += self.vy
+        if self.rect.top > HEIGHT or self.rect.bottom < 0 or self.rect.left < 0 or self.rect.right > WIDTH:
+            self.kill()
+
 # --- ENEMY CLASSES ---
 
 class Enemy(pygame.sprite.Sprite):
@@ -488,7 +504,7 @@ class Enemy(pygame.sprite.Sprite):
         self.rect = self.image.get_rect()
         self.radius = int(self.rect.width * .85 / 2)
         self.reset_pos()
-        self.hp = 1 # Musuh biasa 1 hit mati
+        self.hp = 1 
         self.score_val = 10
         self.hit_timer = 0
 
@@ -503,7 +519,7 @@ class Enemy(pygame.sprite.Sprite):
         self.hit_timer = pygame.time.get_ticks()
         self.image.set_alpha(150)
 
-    def shoot(self, all_sprites, enemy_bullets):
+    def shoot(self, all_sprites, enemy_bullets, target_pos=None):
         if random.random() < 0.005:
             eb = EnemyBullet(self.rect.centerx, self.rect.bottom)
             all_sprites.add(eb)
@@ -544,13 +560,20 @@ class TankerEnemy(Enemy):
         self.rect = self.image.get_rect()
         self.radius = int(self.rect.width * 0.4)
         self.reset_pos()
-        self.hp = 5 # Butuh 5 hit
-        self.speed_y = 1 # Lambat
+        self.hp = 5 
+        self.speed_y = 1 
         self.score_val = 50
 
     def reset_pos(self):
         super().reset_pos()
         self.speed_y = 1 
+
+    def shoot(self, all_sprites, enemy_bullets, target_pos=None):
+        # Tanker shoots aiming bullets!
+        if random.random() < 0.015 and target_pos:
+            tb = TargetingBullet(self.rect.centerx, self.rect.bottom, target_pos[0], target_pos[1])
+            all_sprites.add(tb)
+            enemy_bullets.add(tb)
 
     def update(self, *args):
         if self.hit_timer > 0 and pygame.time.get_ticks() - self.hit_timer > 100:
@@ -596,7 +619,7 @@ class Boss(pygame.sprite.Sprite):
         
         self.max_hp = 2000
         self.hp = self.max_hp
-        self.draw_hp = self.hp # For Smooth Animation
+        self.draw_hp = self.hp 
         self.state = 'entering' 
         self.speed_x = 3
         
@@ -605,7 +628,6 @@ class Boss(pygame.sprite.Sprite):
         self.wave_offset = 0
 
     def update(self, *args):
-        # Lerp HP bar
         if self.draw_hp > self.hp:
             self.draw_hp -= (self.draw_hp - self.hp) * 0.1
             
@@ -687,6 +709,11 @@ def draw_bar_modern(surf, x, y, w, h, current, maximum, color_start, color_end):
             pygame.draw.line(surf, (int(r), int(g), int(b)), (x + i, y), (x + i, y + h - 1))
     pygame.draw.rect(surf, WHITE, (x, y, w, h), 2, border_radius=3)
 
+def calculate_rank(score):
+    if score >= 5000: return "S", (255, 215, 0) # Gold
+    elif score >= 3000: return "A", (192, 192, 192) # Silver
+    elif score >= 1000: return "B", (205, 127, 50) # Bronze
+    else: return "C", WHITE
 
 # --- MAIN ---
 def main():
@@ -709,7 +736,7 @@ def main():
         pass
     
     screen = pygame.display.set_mode((screen_w, screen_h), pygame.FULLSCREEN)
-    pygame.display.set_caption("BLASTER CV GAME")
+    pygame.display.set_caption("HAND-BLASTER SQUADRON GAME")
     GAME_W, GAME_H = 960, 720
     WIDTH, HEIGHT = GAME_W, GAME_H 
     game_surface = pygame.Surface((GAME_W, GAME_H))
@@ -822,16 +849,20 @@ def main():
     # Combo System
     combo_count = 0
     combo_timer = 0 
-    max_combo_reached = 0 # Stat Tracking
+    max_combo_reached = 0 
 
     # Stats
     total_kills_session = 0
     start_time_session = 0
 
-    # Calibration & Menu
+    # Calibration & Menu Buttons
     calibration_timer = 0
     btn_start = MenuButton(GAME_W//2 - 100, GAME_H//2 + 50, 200, 60, "START", NEON_BLUE)
     btn_quit = MenuButton(GAME_W//2 - 100, GAME_H//2 + 130, 200, 60, "QUIT", RED)
+    
+    # Pause Buttons
+    btn_resume = MenuButton(GAME_W//2 - 100, GAME_H//2 + 20, 200, 60, "RESUME", NEON_BLUE)
+    btn_menu = MenuButton(GAME_W//2 - 100, GAME_H//2 + 100, 200, 60, "MENU", RED)
 
     def spawn_enemy():
         r = random.random()
@@ -932,9 +963,8 @@ def main():
             
         bomb_sound.play() 
         ulti_meter = 0
-        shake_intensity = 30 # Bigger Shake
+        shake_intensity = 30 
         
-        # Shockwave Visual
         sw = Shockwave(player.rect.centerx, player.rect.centery)
         all_sprites.add(sw)
         
@@ -977,7 +1007,7 @@ def main():
     while running:
         # SLOW MOTION LOGIC
         if slow_mo_active:
-            clock.tick(15) # Lambat
+            clock.tick(15) 
             if pygame.time.get_ticks() > slow_mo_timer:
                 slow_mo_active = False
         else:
@@ -1036,7 +1066,6 @@ def main():
              cursor_screen_y = int(frac_y * GAME_H)
 
         if game_state == 'start':
-            # --- START MENU HAND INTERACTION ---
             current_time = pygame.time.get_ticks()
             if camera_on:
                 if btn_start.update((cursor_screen_x, cursor_screen_y), current_time):
@@ -1044,6 +1073,16 @@ def main():
                     game_state = 'play'
                 if btn_quit.update((cursor_screen_x, cursor_screen_y), current_time):
                     running = False
+        
+        elif game_state == 'pause':
+            current_time = pygame.time.get_ticks()
+            if camera_on:
+                if btn_resume.update((cursor_screen_x, cursor_screen_y), current_time):
+                    game_state = 'play'
+                    pygame.mixer.music.unpause()
+                if btn_menu.update((cursor_screen_x, cursor_screen_y), current_time):
+                    game_state = 'start'
+                    pygame.mixer.music.stop()
 
         if game_state == 'play':
             current_gesture = "DIAM"
@@ -1116,9 +1155,10 @@ def main():
 
             # --- Update Enemy Shooting ---
             for enemy in enemies:
-                enemy.shoot(all_sprites, enemy_bullets)
+                # Pass Player Position for Targeting
+                enemy.shoot(all_sprites, enemy_bullets, player.rect.center)
 
-            # --- WAVE LOGIC ---
+            # --- WAVE LOGIC (SAFEGUARD ADDED) ---
             if not boss_active and not in_wave_transition:
                 all_enemies_dead = (len(enemies) == 0)
                 quota_met = (enemies_killed_in_wave >= wave_quota) or (enemies_spawned_in_wave >= wave_quota)
@@ -1477,8 +1517,16 @@ def main():
             trans_surface.fill((0, 0, 0, 150)) 
             game_surface.blit(trans_surface, (0, 0))
             draw_text_center(game_surface, "PAUSED", 60, GAME_W//2, GAME_H//2 - 100, YELLOW, font_key='RussoOne')
-            draw_text_center(game_surface, "Tekan ENTER untuk Lanjutkan", 30, GAME_W//2, GAME_H//2, WHITE, font_key='Oxanium')
-            draw_text_center(game_surface, "Tekan Q untuk Kembali ke Start Screen", 30, GAME_W//2, GAME_H//2 + 60, RED, font_key='Oxanium')
+            
+            # --- PAUSE MENU HAND CURSOR ---
+            if camera_on:
+                pygame.draw.circle(game_surface, GREEN, (cursor_screen_x, cursor_screen_y), 15, 3)
+                pygame.draw.circle(game_surface, (0,255,0,100), (cursor_screen_x, cursor_screen_y), 5)
+                btn_resume.draw(game_surface)
+                btn_menu.draw(game_surface)
+            else:
+                draw_text_center(game_surface, "Tekan ENTER untuk Lanjutkan", 30, GAME_W//2, GAME_H//2, WHITE, font_key='Oxanium')
+                draw_text_center(game_surface, "Tekan Q untuk Kembali ke Start Screen", 30, GAME_W//2, GAME_H//2 + 60, RED, font_key='Oxanium')
 
         elif game_state == 'gameover':
             trans_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -1486,12 +1534,16 @@ def main():
             game_surface.blit(trans_surface, (0, 0))
             draw_text_center(game_surface, "GAME OVER", 50, GAME_W//2, GAME_H//2 - 50, (255, 50, 50), font_key='RussoOne')
             
-            # --- FINAL STATS ---
+            # --- FINAL STATS & RANK ---
             elapsed_time = int(time.time() - start_time_session)
             minutes = elapsed_time // 60
             seconds = elapsed_time % 60
             
+            rank_letter, rank_color = calculate_rank(score)
+            
             draw_text_center(game_surface, f"FINAL SCORE: {score}", 30, GAME_W//2, GAME_H//2 + 20, WHITE, font_key='Orbitron')
+            draw_text_center(game_surface, f"RANK: {rank_letter}", 60, GAME_W//2, GAME_H//2 - 120, rank_color, font_key='RussoOne')
+            
             draw_text_center(game_surface, f"WAVE REACHED: {current_wave}", 24, GAME_W//2, GAME_H//2 + 60, ORANGE, font_key='Oxanium')
             draw_text_center(game_surface, f"TOTAL KILLS: {total_kills_session}", 24, GAME_W//2, GAME_H//2 + 90, NEON_BLUE, font_key='Oxanium')
             draw_text_center(game_surface, f"MAX COMBO: {max_combo_reached}x", 24, GAME_W//2, GAME_H//2 + 120, YELLOW, font_key='Oxanium')
